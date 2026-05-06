@@ -21,3 +21,4 @@ A PWA (Progressive Web App) for managing guitar chord diagrams.
 - Vanilla HTML/CSS/JS (no build step needed)
 - Firebase Auth + Firestore
 - PWA with manifest
+
