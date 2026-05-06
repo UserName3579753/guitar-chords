@@ -1,0 +1,138 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <title>Guitar Chords</title>
+  <link rel="manifest" href="manifest.json" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="Guitar Chords" />
+  <link rel="apple-touch-icon" href="icon.png" />
+  <link rel="stylesheet" href="style.css" />
+  <link href="https://fonts.googleapis.com/css2?family=Oswald:wght@400;600;700&family=Source+Sans+3:wght@300;400;600&display=swap" rel="stylesheet" />
+</head>
+<body>
+  <div id="app">
+    <!-- Login Screen -->
+    <div id="screen-login" class="screen active">
+      <div class="login-bg"></div>
+      <div class="login-content">
+        <div class="login-logo">🎸</div>
+        <h1 class="login-title">Guitar<br/>Chords</h1>
+        <p class="login-sub">Your personal chord library</p>
+        <button id="btn-google-login" class="btn-login">
+          <svg width="20" height="20" viewBox="0 0 48 48"><path fill="#FFC107" d="M43.6 20.5H42V20H24v8h11.3C33.7 32.8 29.3 36 24 36c-6.6 0-12-5.4-12-12s5.4-12 12-12c3.1 0 5.8 1.1 7.9 3l5.7-5.7C34.5 6.5 29.5 4 24 4 12.9 4 4 12.9 4 24s8.9 20 20 20 20-8.9 20-20c0-1.2-.1-2.4-.4-3.5z"/><path fill="#FF3D00" d="M6.3 14.7l6.6 4.8C14.7 16 19 13 24 13c3.1 0 5.8 1.1 7.9 3l5.7-5.7C34.5 6.5 29.5 4 24 4 16.3 4 9.7 8.3 6.3 14.7z"/><path fill="#4CAF50" d="M24 44c5.2 0 9.9-2 13.4-5.2l-6.2-5.2C29.3 35.3 26.8 36 24 36c-5.3 0-9.7-3.2-11.3-7.8l-6.5 5C9.6 39.6 16.3 44 24 44z"/><path fill="#1976D2" d="M43.6 20.5H42V20H24v8h11.3c-.8 2.3-2.3 4.2-4.3 5.6l6.2 5.2C40.9 35.3 44 30 44 24c0-1.2-.1-2.4-.4-3.5z"/></svg>
+          Sign in with Google
+        </button>
+      </div>
+    </div>
+
+    <!-- Home Screen -->
+    <div id="screen-home" class="screen">
+      <div class="top-bar">
+        <h1 class="app-title">Guitar Chords</h1>
+        <button id="btn-logout" class="btn-icon" title="Sign out">⏻</button>
+      </div>
+      <div class="home-content">
+        <p class="home-label">Select a root note</p>
+        <div class="note-grid">
+          <button class="note-btn" data-note="A">A</button>
+          <button class="note-btn" data-note="B">B (H)</button>
+          <button class="note-btn" data-note="C">C</button>
+          <button class="note-btn" data-note="D">D</button>
+          <button class="note-btn" data-note="E">E</button>
+          <button class="note-btn" data-note="F">F</button>
+          <button class="note-btn" data-note="G">G</button>
+        </div>
+        <button id="btn-add-chord" class="btn-add">+ Add New Chord</button>
+      </div>
+    </div>
+
+    <!-- Chord List Screen -->
+    <div id="screen-chords" class="screen">
+      <div class="top-bar">
+        <button class="btn-back" onclick="showScreen('home')">‹ Back</button>
+        <h2 id="chord-list-title" class="top-bar-title"></h2>
+        <div style="width:40px"></div>
+      </div>
+      <div class="chord-scroll-wrapper">
+        <div id="chord-carousel" class="chord-carousel"></div>
+      </div>
+      <div class="hand-fixed">
+        <div class="hand-container">
+          <img src="hand.jpg" alt="Hand diagram" style="width:110px; height:auto;" />
+          <div class="hand-legend">
+            <span class="legend-item"><span class="dot red"></span>Index</span>
+            <span class="legend-item"><span class="dot green"></span>Middle</span>
+            <span class="legend-item"><span class="dot blue"></span>Ring</span>
+            <span class="legend-item"><span class="dot yellow"></span>Pinky</span>
+            <span class="legend-item"><span class="dot gray"></span>Thumb</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Add/Edit Chord Screen -->
+    <div id="screen-edit" class="screen">
+      <div class="top-bar">
+        <button class="btn-back" id="btn-edit-back">‹ Back</button>
+        <h2 id="edit-title" class="top-bar-title">New Chord</h2>
+        <button id="btn-save-chord" class="btn-save">Save</button>
+      </div>
+      <div class="edit-content">
+        <div class="edit-fields">
+          <div class="field-group">
+            <label>Root Note</label>
+            <select id="edit-note">
+              <option value="A">A</option>
+              <option value="B">B (H)</option>
+              <option value="C">C</option>
+              <option value="D">D</option>
+              <option value="E">E</option>
+              <option value="F">F</option>
+              <option value="G">G</option>
+            </select>
+          </div>
+          <div class="field-group">
+            <label>Chord Name</label>
+            <input type="text" id="edit-name" placeholder="e.g. Am, C maj7, G7" />
+          </div>
+        </div>
+
+        <div class="diagram-editor">
+          <div id="editor-string-labels" class="editor-string-labels"></div>
+          <div id="editor-diagram" class="editor-diagram"></div>
+        </div>
+
+        <div class="finger-palette">
+          <p class="palette-label">Drag a finger onto the diagram:</p>
+          <div class="palette-fingers">
+            <div class="palette-dot red" draggable="true" data-finger="1" data-color="#e53935">1</div>
+            <div class="palette-dot green" draggable="true" data-finger="2" data-color="#43a047">2</div>
+            <div class="palette-dot blue" draggable="true" data-finger="3" data-color="#1e88e5">3</div>
+            <div class="palette-dot yellow" draggable="true" data-finger="4" data-color="#f9a825">4</div>
+            <div class="palette-dot gray" draggable="true" data-finger="T" data-color="#555">T</div>
+          </div>
+          <p class="palette-hint">Tap a placed dot to remove it</p>
+        </div>
+
+        <div class="hand-fixed">
+          <div class="hand-container">
+            <img src="hand.jpg" alt="Hand diagram" style="width:110px; height:auto;" />
+            <div class="hand-legend">
+              <span class="legend-item"><span class="dot red"></span>Index</span>
+              <span class="legend-item"><span class="dot green"></span>Middle</span>
+              <span class="legend-item"><span class="dot blue"></span>Ring</span>
+              <span class="legend-item"><span class="dot yellow"></span>Pinky</span>
+              <span class="legend-item"><span class="dot gray"></span>Thumb</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script type="module" src="app.js"></script>
+</body>
+</html>
