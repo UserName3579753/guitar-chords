@@ -1,6 +1,3 @@
-// =====================
-// Firebase Setup
-// =====================
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
 import { getAuth, GoogleAuthProvider, signInWithPopup, signOut, onAuthStateChanged }
   from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
@@ -21,16 +18,9 @@ const auth = getAuth(fbApp);
 const db = getFirestore(fbApp);
 
 // =====================
-// State
+// Constants
 // =====================
-let currentUser = null;
-let currentNote = null;
-let currentChords = [];
-let editingChord = null; // null = new, object = existing
-
-// Editor state
-let editorStrings = ['x','o','o','o','o','o']; // index 0 = string 6 (low E)
-let editorDots = []; // {string: 0-5, fret: 0-4, finger: '1'/'2'/'3'/'4'/'T', color: '#...'}
+const NOTE_ORDER = ['A', 'B', 'C', 'D', 'E', 'F', 'G'];
 
 const FINGER_COLORS = {
   '1': '#e53935',
@@ -40,8 +30,43 @@ const FINGER_COLORS = {
   'T': '#555555'
 };
 
+// Diagram dimensions (view mode — taller cells)
+const V = {
+  STRINGS: 6, FRETS: 5,
+  CELL_W: 44, CELL_H: 56,
+  PAD_L: 28, PAD_T: 36, PAD_R: 14, PAD_B: 14
+};
+V.W = V.PAD_L + V.CELL_W * (V.STRINGS - 1) + V.PAD_R;
+V.H = V.PAD_T + V.CELL_H * V.FRETS + V.PAD_B;
+
+// Diagram dimensions (edit mode — slightly smaller to fit screen)
+const E = {
+  STRINGS: 6, FRETS: 5,
+  CELL_W: 44, CELL_H: 48,
+  PAD_L: 28, PAD_T: 14, PAD_R: 14, PAD_B: 10
+};
+E.W = E.PAD_L + E.CELL_W * (E.STRINGS - 1) + E.PAD_R;
+E.H = E.PAD_T + E.CELL_H * E.FRETS + E.PAD_B;
+
 // =====================
-// Screen Navigation
+// State
+// =====================
+let currentUser = null;
+let currentNote = null;       // which note was tapped on home screen
+let allChords = [];           // all chords for this user, sorted
+let editingChord = null;
+
+// Editor state
+let editorStrings = ['x','o','o','o','o','o'];
+let editorDots = [];    // {string, fret, finger}  — single dot
+let editorBarres = [];  // {fret, fromString, toString, finger}
+let selectedFinger = null;
+
+// Barre drag tracking
+let barreDragStart = null; // {string, fret} when touch/mousedown starts
+
+// =====================
+// Screen nav
 // =====================
 window.showScreen = function(name) {
   document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
@@ -52,12 +77,9 @@ window.showScreen = function(name) {
 // Auth
 // =====================
 document.getElementById('btn-google-login').addEventListener('click', async () => {
-  const provider = new GoogleAuthProvider();
   try {
-    await signInWithPopup(auth, provider);
-  } catch (e) {
-    alert('Login failed: ' + e.message);
-  }
+    await signInWithPopup(auth, new GoogleAuthProvider());
+  } catch (e) { alert('Login failed: ' + e.message); }
 });
 
 document.getElementById('btn-logout').addEventListener('click', async () => {
@@ -66,73 +88,69 @@ document.getElementById('btn-logout').addEventListener('click', async () => {
 
 onAuthStateChanged(auth, user => {
   currentUser = user;
-  if (user) {
-    showScreen('home');
-  } else {
-    showScreen('login');
-  }
+  if (user) showScreen('home');
+  else showScreen('login');
 });
 
 // =====================
-// Home: Note buttons
+// Home: note buttons
 // =====================
 document.querySelectorAll('.note-btn').forEach(btn => {
   btn.addEventListener('click', () => {
     currentNote = btn.dataset.note;
-    document.getElementById('chord-list-title').textContent = currentNote;
-    loadChords(currentNote);
-    showScreen('chords');
+    loadAndShowChords(currentNote);
   });
 });
 
-document.getElementById('btn-add-chord').addEventListener('click', () => {
-  openEditor(null);
-});
+document.getElementById('btn-add-chord').addEventListener('click', () => openEditor(null));
+document.getElementById('btn-add-from-view').addEventListener('click', () => openEditor(null));
 
 // =====================
-// Load Chords from Firestore
+// Load all chords & show carousel
 // =====================
-async function loadChords(note) {
+async function loadAndShowChords(scrollToNote) {
   const carousel = document.getElementById('chord-carousel');
-  carousel.innerHTML = '<div class="empty-state"><p>Loading...</p></div>';
+  carousel.innerHTML = '<div class="chord-card"><div class="empty-state"><p>Loading…</p></div></div>';
+  showScreen('chords');
 
-  const q = query(
-    collection(db, 'chords'),
-    where('uid', '==', currentUser.uid),
-    where('note', '==', note)
-  );
+  const q = query(collection(db, 'chords'), where('uid', '==', currentUser.uid));
   const snap = await getDocs(q);
-  currentChords = [];
-  snap.forEach(d => currentChords.push({ id: d.id, ...d.data() }));
+  allChords = [];
+  snap.forEach(d => allChords.push({ id: d.id, ...d.data() }));
 
-  renderCarousel();
+  // Sort alphabetically by chord name, then by note order
+  allChords.sort((a, b) => {
+    const ni = NOTE_ORDER.indexOf(a.note) - NOTE_ORDER.indexOf(b.note);
+    if (ni !== 0) return ni;
+    return a.name.localeCompare(b.name);
+  });
+
+  renderCarousel(scrollToNote);
 }
 
-function renderCarousel() {
+function renderCarousel(scrollToNote) {
   const carousel = document.getElementById('chord-carousel');
+  const dotsEl = document.getElementById('scroll-dots');
   carousel.innerHTML = '';
+  dotsEl.innerHTML = '';
 
-  // Remove old dots
-  const oldDots = document.querySelector('.scroll-dots');
-  if (oldDots) oldDots.remove();
+  // Update title
+  document.getElementById('chord-list-title').textContent = currentNote || 'All Chords';
 
-  if (currentChords.length === 0) {
-    carousel.innerHTML = `
-      <div class="chord-card">
-        <div class="empty-state">
-          <p>No chords yet for ${currentNote}.<br/>Add your first one!</p>
-          <button class="btn-add-first" onclick="openEditor(null)">+ Add Chord</button>
-        </div>
-      </div>`;
+  if (allChords.length === 0) {
+    carousel.innerHTML = `<div class="chord-card"><div class="empty-state">
+      <p>No chords yet.<br/>Add your first one!</p>
+      <button class="btn-add-first" onclick="openEditor(null)">+ Add Chord</button>
+    </div></div>`;
     return;
   }
 
-  currentChords.forEach((chord, i) => {
+  allChords.forEach((chord, i) => {
     const card = document.createElement('div');
     card.className = 'chord-card';
     card.innerHTML = `
       <div class="chord-card-name">${escapeHtml(chord.name)}</div>
-      ${buildDiagramSVG(chord, 260, 220)}
+      ${buildDiagramSVG(chord, V)}
       <div class="chord-card-actions">
         <button class="btn-edit-chord" data-i="${i}">✏️ Edit</button>
         <button class="btn-delete-chord" data-i="${i}">🗑 Delete</button>
@@ -141,79 +159,96 @@ function renderCarousel() {
   });
 
   // Scroll dots
-  if (currentChords.length > 1) {
-    const dotsEl = document.createElement('div');
-    dotsEl.className = 'scroll-dots';
-    currentChords.forEach((_, i) => {
-      const d = document.createElement('div');
-      d.className = 'scroll-dot' + (i === 0 ? ' active' : '');
-      dotsEl.appendChild(d);
-    });
-    const wrapper = document.querySelector('.chord-scroll-wrapper');
-    wrapper.insertAdjacentElement('afterend', dotsEl);
+  allChords.forEach((_, i) => {
+    const d = document.createElement('div');
+    d.className = 'scroll-dot' + (i === 0 ? ' active' : '');
+    dotsEl.appendChild(d);
+  });
 
-    carousel.addEventListener('scroll', () => {
-      const idx = Math.round(carousel.scrollLeft / carousel.clientWidth);
-      document.querySelectorAll('.scroll-dot').forEach((d, i) => {
-        d.classList.toggle('active', i === idx);
-      });
+  carousel.addEventListener('scroll', () => {
+    const idx = Math.round(carousel.scrollLeft / carousel.clientWidth);
+    document.querySelectorAll('.scroll-dot').forEach((d, i) => {
+      d.classList.toggle('active', i === idx);
     });
-  }
+  });
 
-  // Edit / Delete buttons
   carousel.querySelectorAll('.btn-edit-chord').forEach(btn => {
-    btn.addEventListener('click', () => openEditor(currentChords[+btn.dataset.i]));
+    btn.addEventListener('click', () => openEditor(allChords[+btn.dataset.i]));
   });
   carousel.querySelectorAll('.btn-delete-chord').forEach(btn => {
-    btn.addEventListener('click', () => deleteChord(currentChords[+btn.dataset.i]));
+    btn.addEventListener('click', () => deleteChord(allChords[+btn.dataset.i]));
   });
+
+  // Scroll to the first chord matching scrollToNote
+  if (scrollToNote) {
+    const idx = allChords.findIndex(c => c.note === scrollToNote);
+    if (idx > 0) {
+      requestAnimationFrame(() => {
+        carousel.scrollLeft = idx * carousel.clientWidth;
+        document.querySelectorAll('.scroll-dot').forEach((d, i) => {
+          d.classList.toggle('active', i === idx);
+        });
+      });
+    }
+  }
 }
 
 // =====================
-// Build Diagram SVG
+// Build diagram SVG (view & edit)
 // =====================
-function buildDiagramSVG(chord, svgW, svgH) {
+function buildDiagramSVG(chord, dim) {
   const strings = chord.strings || ['o','o','o','o','o','o'];
-  const dots = chord.dots || [];
+  const dots    = chord.dots    || [];
+  const barres  = chord.barres  || [];
 
-  const padL = 30, padT = 36, padR = 10, padB = 20;
-  const w = svgW - padL - padR;
-  const h = svgH - padT - padB;
-  const strGap = w / 5;
-  const fretGap = h / 5;
+  const { STRINGS, FRETS, CELL_W, CELL_H, PAD_L, PAD_T, W, H } = dim;
 
-  let svg = `<svg class="diagram-svg" width="${svgW}" height="${svgH}" viewBox="0 0 ${svgW} ${svgH}" xmlns="http://www.w3.org/2000/svg">`;
+  let svg = `<svg class="diagram-svg" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg">`;
 
-  // Nut (double line at top)
-  svg += `<rect x="${padL}" y="${padT}" width="${w}" height="5" fill="#c8a96e" rx="2"/>`;
-  svg += `<rect x="${padL}" y="${padT + 7}" width="${w}" height="2" fill="#c8a96e" rx="1"/>`;
+  // Nut (double line)
+  svg += `<rect x="${PAD_L}" y="${PAD_T}" width="${CELL_W*(STRINGS-1)}" height="5" fill="#c8a96e" rx="2"/>`;
+  svg += `<rect x="${PAD_L}" y="${PAD_T+7}" width="${CELL_W*(STRINGS-1)}" height="2" fill="#c8a96e" rx="1"/>`;
 
   // Fret lines
-  for (let f = 1; f <= 5; f++) {
-    const y = padT + f * fretGap;
-    svg += `<line x1="${padL}" y1="${y}" x2="${padL + w}" y2="${y}" stroke="#3a4a6a" stroke-width="1.5"/>`;
+  for (let f = 1; f <= FRETS; f++) {
+    const y = PAD_T + f * CELL_H;
+    svg += `<line x1="${PAD_L}" y1="${y}" x2="${PAD_L+CELL_W*(STRINGS-1)}" y2="${y}" stroke="#3a4a6a" stroke-width="1.5"/>`;
   }
 
   // String lines
-  for (let s = 0; s < 6; s++) {
-    const x = padL + s * strGap;
-    svg += `<line x1="${x}" y1="${padT}" x2="${x}" y2="${padT + h}" stroke="#d4af6a" stroke-width="1.5"/>`;
+  for (let s = 0; s < STRINGS; s++) {
+    const x = PAD_L + s * CELL_W;
+    svg += `<line x1="${x}" y1="${PAD_T}" x2="${x}" y2="${PAD_T+CELL_H*FRETS}" stroke="#d4af6a" stroke-width="1.5"/>`;
   }
 
-  // String labels (O / X) above nut
+  // String labels (O/X)
   strings.forEach((label, s) => {
-    const x = padL + s * strGap;
+    const x = PAD_L + s * CELL_W;
     const color = label === 'o' ? '#aed6f1' : '#e53935';
-    svg += `<text x="${x}" y="${padT - 10}" text-anchor="middle" fill="${color}" font-size="14" font-weight="700" font-family="Oswald">${label.toUpperCase()}</text>`;
+    svg += `<text x="${x}" y="${PAD_T - 10}" text-anchor="middle" fill="${color}" font-size="14" font-weight="700" font-family="Oswald">${label.toUpperCase()}</text>`;
   });
 
-  // Finger dots
+  // Barres — drawn as rounded rectangles
+  barres.forEach(barre => {
+    const r = CELL_H * 0.38; // same radius as dots
+    const x1 = PAD_L + barre.fromString * CELL_W;
+    const x2 = PAD_L + barre.toString  * CELL_W;
+    const cy = PAD_T + (barre.fret - 0.5) * CELL_H;
+    const color = FINGER_COLORS[barre.finger] || '#888';
+    svg += `<rect x="${x1 - r}" y="${cy - r}" width="${(x2 - x1) + r*2}" height="${r*2}" rx="${r}" fill="${color}"/>`;
+    // Finger label in center
+    const mx = (x1 + x2) / 2;
+    svg += `<text x="${mx}" y="${cy + 5}" text-anchor="middle" fill="white" font-size="13" font-weight="700" font-family="Oswald">${barre.finger}</text>`;
+  });
+
+  // Single dots
   dots.forEach(dot => {
-    const x = padL + dot.string * strGap;
-    const y = padT + (dot.fret - 0.5) * fretGap;
+    const cx = PAD_L + dot.string * CELL_W;
+    const cy = PAD_T + (dot.fret - 0.5) * CELL_H;
+    const r  = CELL_H * 0.38;
     const color = FINGER_COLORS[dot.finger] || '#888';
-    svg += `<circle cx="${x}" cy="${y}" r="${fretGap * 0.38}" fill="${color}"/>`;
-    svg += `<text x="${x}" y="${y + 5}" text-anchor="middle" fill="white" font-size="13" font-weight="700" font-family="Oswald">${dot.finger}</text>`;
+    svg += `<circle cx="${cx}" cy="${cy}" r="${r}" fill="${color}"/>`;
+    svg += `<text x="${cx}" y="${cy + 5}" text-anchor="middle" fill="white" font-size="13" font-weight="700" font-family="Oswald">${dot.finger}</text>`;
   });
 
   svg += '</svg>';
@@ -221,12 +256,12 @@ function buildDiagramSVG(chord, svgW, svgH) {
 }
 
 // =====================
-// Delete Chord
+// Delete chord
 // =====================
 async function deleteChord(chord) {
   if (!confirm(`Delete "${chord.name}"?`)) return;
   await deleteDoc(doc(db, 'chords', chord.id));
-  await loadChords(currentNote);
+  await loadAndShowChords(currentNote);
 }
 
 // =====================
@@ -234,23 +269,26 @@ async function deleteChord(chord) {
 // =====================
 window.openEditor = function(chord) {
   editingChord = chord;
+  selectedFinger = null;
 
   if (chord) {
     document.getElementById('edit-title').textContent = 'Edit Chord';
     document.getElementById('edit-note').value = chord.note;
-    document.getElementById('edit-name').value = chord.name;
+    document.getElementById('edit-name').value  = chord.name;
     editorStrings = chord.strings ? [...chord.strings] : ['o','o','o','o','o','o'];
-    editorDots = chord.dots ? chord.dots.map(d => ({...d})) : [];
+    editorDots    = chord.dots    ? chord.dots.map(d => ({...d}))   : [];
+    editorBarres  = chord.barres  ? chord.barres.map(b => ({...b})) : [];
   } else {
     document.getElementById('edit-title').textContent = 'New Chord';
     document.getElementById('edit-note').value = currentNote || 'A';
-    document.getElementById('edit-name').value = '';
+    document.getElementById('edit-name').value  = '';
     editorStrings = ['x','o','o','o','o','o'];
-    editorDots = [];
+    editorDots    = [];
+    editorBarres  = [];
   }
 
   document.getElementById('btn-edit-back').onclick = () => {
-    if (currentNote) showScreen('chords');
+    if (allChords.length > 0) showScreen('chords');
     else showScreen('home');
   };
 
@@ -261,26 +299,33 @@ window.openEditor = function(chord) {
 function renderEditor() {
   renderStringLabels();
   renderEditorDiagram();
+  renderPalette();
 }
 
-// String label buttons (O / X / muted)
+function renderPalette() {
+  document.querySelectorAll('.palette-dot').forEach(d => {
+    d.classList.toggle('selected', d.dataset.finger === selectedFinger);
+    d.onclick = () => {
+      selectedFinger = (selectedFinger === d.dataset.finger) ? null : d.dataset.finger;
+      renderPalette();
+    };
+  });
+}
+
+// String O/X toggle buttons
 function renderStringLabels() {
   const container = document.getElementById('editor-string-labels');
   container.innerHTML = '';
 
-  const CELL = 44;
-  const padL = 30;
-
-  // Spacer for left padding
   const spacer = document.createElement('div');
-  spacer.style.width = padL + 'px';
+  spacer.style.width = E.PAD_L + 'px';
   container.appendChild(spacer);
 
   editorStrings.forEach((val, s) => {
     const btn = document.createElement('button');
     btn.className = 'string-label-btn ' + (val === 'o' ? 'open' : 'muted');
     btn.textContent = val.toUpperCase();
-    btn.style.width = CELL + 'px';
+    btn.style.width  = E.CELL_W + 'px';
     btn.style.height = '28px';
     btn.addEventListener('click', () => {
       editorStrings[s] = editorStrings[s] === 'o' ? 'x' : 'o';
@@ -290,198 +335,199 @@ function renderStringLabels() {
   });
 }
 
-// Editor diagram with drag & drop
+// =====================
+// Editor diagram with tap + barre drag
+// =====================
 function renderEditorDiagram() {
   const container = document.getElementById('editor-diagram');
   container.innerHTML = '';
 
-  const STRINGS = 6;
-  const FRETS = 5;
-  const CELL = 44;
-  const padL = 30;
-  const padT = 14;
-  const padR = 14;
-  const padB = 14;
-  const svgW = padL + CELL * (STRINGS - 1) + padR + 14;
-  const svgH = padT + CELL * FRETS + padB;
-  const strGap = CELL;
-  const fretGap = CELL;
+  const { STRINGS, FRETS, CELL_W, CELL_H, PAD_L, PAD_T, W, H } = E;
 
-  let svg = `<svg width="${svgW}" height="${svgH}" viewBox="0 0 ${svgW} ${svgH}" xmlns="http://www.w3.org/2000/svg" id="editor-svg">`;
+  let svg = `<svg width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg" id="editor-svg" style="touch-action:none;">`;
 
   // Nut
-  svg += `<rect x="${padL}" y="${padT}" width="${CELL * (STRINGS-1)}" height="6" fill="#c8a96e" rx="2"/>`;
-  svg += `<rect x="${padL}" y="${padT + 8}" width="${CELL * (STRINGS-1)}" height="2.5" fill="#c8a96e" rx="1"/>`;
+  svg += `<rect x="${PAD_L}" y="${PAD_T}" width="${CELL_W*(STRINGS-1)}" height="5" fill="#c8a96e" rx="2"/>`;
+  svg += `<rect x="${PAD_L}" y="${PAD_T+7}" width="${CELL_W*(STRINGS-1)}" height="2" fill="#c8a96e" rx="1"/>`;
 
   // Fret lines
   for (let f = 1; f <= FRETS; f++) {
-    const y = padT + f * fretGap;
-    svg += `<line x1="${padL}" y1="${y}" x2="${padL + CELL*(STRINGS-1)}" y2="${y}" stroke="#3a4a6a" stroke-width="1.5"/>`;
+    const y = PAD_T + f * CELL_H;
+    svg += `<line x1="${PAD_L}" y1="${y}" x2="${PAD_L+CELL_W*(STRINGS-1)}" y2="${y}" stroke="#3a4a6a" stroke-width="1.5"/>`;
   }
 
   // String lines
   for (let s = 0; s < STRINGS; s++) {
-    const x = padL + s * strGap;
-    svg += `<line x1="${x}" y1="${padT}" x2="${x}" y2="${padT + CELL*FRETS}" stroke="#d4af6a" stroke-width="1.5"/>`;
+    const x = PAD_L + s * CELL_W;
+    svg += `<line x1="${x}" y1="${PAD_T}" x2="${x}" y2="${PAD_T+CELL_H*FRETS}" stroke="#d4af6a" stroke-width="1.5"/>`;
   }
 
-  // Drop zone cells (invisible, for tap-to-remove)
+  // Invisible tap zones
   for (let s = 0; s < STRINGS; s++) {
     for (let f = 1; f <= FRETS; f++) {
-      const cx = padL + s * strGap;
-      const cy = padT + (f - 0.5) * fretGap;
-      svg += `<circle cx="${cx}" cy="${cy}" r="${fretGap*0.4}" fill="transparent" data-s="${s}" data-f="${f}" class="drop-cell"/>`;
+      const cx = PAD_L + s * CELL_W;
+      const cy = PAD_T + (f - 0.5) * CELL_H;
+      svg += `<rect x="${cx - CELL_W/2}" y="${cy - CELL_H/2}" width="${CELL_W}" height="${CELL_H}" fill="transparent" class="tap-cell" data-s="${s}" data-f="${f}"/>`;
     }
   }
 
-  // Placed finger dots
+  // Drawn barres
+  editorBarres.forEach((barre, idx) => {
+    const r  = CELL_H * 0.38;
+    const x1 = PAD_L + barre.fromString * CELL_W;
+    const x2 = PAD_L + barre.toString   * CELL_W;
+    const cy = PAD_T + (barre.fret - 0.5) * CELL_H;
+    const color = FINGER_COLORS[barre.finger] || '#888';
+    svg += `<rect x="${x1-r}" y="${cy-r}" width="${(x2-x1)+r*2}" height="${r*2}" rx="${r}" fill="${color}" class="placed-barre" data-idx="${idx}" style="cursor:pointer"/>`;
+    svg += `<text x="${(x1+x2)/2}" y="${cy+5}" text-anchor="middle" fill="white" font-size="13" font-weight="700" font-family="Oswald" pointer-events="none">${barre.finger}</text>`;
+  });
+
+  // Drawn dots
   editorDots.forEach((dot, idx) => {
-    const cx = padL + dot.string * strGap;
-    const cy = padT + (dot.fret - 0.5) * fretGap;
+    const cx = PAD_L + dot.string * CELL_W;
+    const cy = PAD_T + (dot.fret - 0.5) * CELL_H;
+    const r  = CELL_H * 0.38;
     const color = FINGER_COLORS[dot.finger] || '#888';
-    svg += `<circle cx="${cx}" cy="${cy}" r="${fretGap*0.38}" fill="${color}" class="placed-dot" data-idx="${idx}"/>`;
-    svg += `<text x="${cx}" y="${cy + 5}" text-anchor="middle" fill="white" font-size="14" font-weight="700" font-family="Oswald" pointer-events="none">${dot.finger}</text>`;
+    svg += `<circle cx="${cx}" cy="${cy}" r="${r}" fill="${color}" class="placed-dot" data-idx="${idx}" style="cursor:pointer"/>`;
+    svg += `<text x="${cx}" y="${cy+5}" text-anchor="middle" fill="white" font-size="13" font-weight="700" font-family="Oswald" pointer-events="none">${dot.finger}</text>`;
   });
 
   svg += '</svg>';
   container.innerHTML = svg;
 
-  // Tap placed dot to remove
+  const svgEl = container.querySelector('svg');
+
+  // Remove placed dot on tap
   container.querySelectorAll('.placed-dot').forEach(el => {
-    el.addEventListener('click', () => {
+    el.addEventListener('click', e => {
+      e.stopPropagation();
       editorDots.splice(+el.dataset.idx, 1);
       renderEditor();
     });
   });
 
-  // Setup drag & drop from palette
-  setupDragDrop(container, padL, padT, strGap, fretGap, STRINGS, FRETS);
-}
-
-// =====================
-// Drag & Drop (touch + mouse)
-// =====================
-function setupDragDrop(diagramContainer, padL, padT, strGap, fretGap, STRINGS, FRETS) {
-  const palette = document.querySelectorAll('.palette-dot');
-
-  palette.forEach(dot => {
-    // Mouse drag
-    dot.addEventListener('dragstart', e => {
-      e.dataTransfer.setData('finger', dot.dataset.finger);
-      e.dataTransfer.setData('color', dot.dataset.color);
+  // Remove placed barre on tap
+  container.querySelectorAll('.placed-barre').forEach(el => {
+    el.addEventListener('click', e => {
+      e.stopPropagation();
+      editorBarres.splice(+el.dataset.idx, 1);
+      renderEditor();
     });
-
-    // Touch drag
-    dot.addEventListener('touchstart', e => {
-      e.preventDefault();
-      const finger = dot.dataset.finger;
-      const color = dot.dataset.color;
-      handleTouchDrag(e, finger, color, diagramContainer, padL, padT, strGap, fretGap, STRINGS, FRETS);
-    }, { passive: false });
   });
 
-  const svg = diagramContainer.querySelector('svg');
+  // ---- Touch / mouse interaction ----
+  // We track touchstart/touchend to detect tap vs drag
 
-  // Mouse drop
-  svg.addEventListener('dragover', e => e.preventDefault());
-  svg.addEventListener('drop', e => {
-    e.preventDefault();
-    const finger = e.dataTransfer.getData('finger');
-    const rect = svg.getBoundingClientRect();
-    const x = e.clientX - rect.left;
-    const y = e.clientY - rect.top;
-    placeDot(finger, x, y, padL, padT, strGap, fretGap, STRINGS, FRETS);
-  });
-}
+  let touchStartString = null;
+  let touchStartFret   = null;
+  let touchMoved       = false;
 
-function handleTouchDrag(startEvent, finger, color, diagramContainer, padL, padT, strGap, fretGap, STRINGS, FRETS) {
-  // Create a floating ghost dot
-  const ghost = document.createElement('div');
-  ghost.style.cssText = `
-    position:fixed; width:40px; height:40px; border-radius:50%;
-    background:${color}; color:white; font-weight:700; font-size:16px;
-    display:flex; align-items:center; justify-content:center;
-    pointer-events:none; z-index:9999; opacity:0.85;
-    font-family:Oswald,sans-serif; transform:translate(-50%,-50%);
-  `;
-  ghost.textContent = finger;
-  document.body.appendChild(ghost);
-
-  const move = (e) => {
-    const t = e.touches[0];
-    ghost.style.left = t.clientX + 'px';
-    ghost.style.top = t.clientY + 'px';
-  };
-
-  const end = (e) => {
-    document.removeEventListener('touchmove', move);
-    document.removeEventListener('touchend', end);
-    ghost.remove();
-
-    const t = e.changedTouches[0];
-    const svg = diagramContainer.querySelector('svg');
-    const rect = svg.getBoundingClientRect();
-    const x = t.clientX - rect.left;
-    const y = t.clientY - rect.top;
-
-    if (x >= 0 && x <= rect.width && y >= 0 && y <= rect.height) {
-      placeDot(finger, x, y, padL, padT, strGap, fretGap, STRINGS, FRETS);
+  function svgPoint(clientX, clientY) {
+    const rect = svgEl.getBoundingClientRect();
+    const x = clientX - rect.left;
+    const y = clientY - rect.top;
+    // Find nearest string
+    let bestS = 0, bestSD = Infinity;
+    for (let s = 0; s < STRINGS; s++) {
+      const d = Math.abs(x - (PAD_L + s * CELL_W));
+      if (d < bestSD) { bestSD = d; bestS = s; }
     }
-  };
+    // Find nearest fret row
+    let bestF = 1, bestFD = Infinity;
+    for (let f = 1; f <= FRETS; f++) {
+      const d = Math.abs(y - (PAD_T + (f - 0.5) * CELL_H));
+      if (d < bestFD) { bestFD = d; bestF = f; }
+    }
+    return { string: bestS, fret: bestF };
+  }
 
-  document.addEventListener('touchmove', move, { passive: false });
-  document.addEventListener('touchend', end);
+  // TOUCH
+  svgEl.addEventListener('touchstart', e => {
+    if (!selectedFinger) return;
+    e.preventDefault();
+    const t = e.touches[0];
+    const p = svgPoint(t.clientX, t.clientY);
+    touchStartString = p.string;
+    touchStartFret   = p.fret;
+    touchMoved = false;
+  }, { passive: false });
 
-  // Initial position
-  const t = startEvent.touches[0];
-  ghost.style.left = t.clientX + 'px';
-  ghost.style.top = t.clientY + 'px';
+  svgEl.addEventListener('touchmove', e => {
+    e.preventDefault();
+    touchMoved = true;
+  }, { passive: false });
+
+  svgEl.addEventListener('touchend', e => {
+    if (!selectedFinger) return;
+    e.preventDefault();
+    const t = e.changedTouches[0];
+    const p = svgPoint(t.clientX, t.clientY);
+
+    if (!touchMoved) {
+      // Tap = single dot
+      placeDot(touchStartString, touchStartFret, selectedFinger);
+    } else {
+      // Drag = barre (same fret, different strings)
+      if (touchStartFret === p.fret && touchStartString !== p.string) {
+        placeBarre(touchStartFret, touchStartString, p.string, selectedFinger);
+      } else {
+        placeDot(p.string, p.fret, selectedFinger);
+      }
+    }
+  }, { passive: false });
+
+  // MOUSE (for PC testing)
+  svgEl.addEventListener('mousedown', e => {
+    if (!selectedFinger) return;
+    const p = svgPoint(e.clientX, e.clientY);
+    barreDragStart = p;
+    touchMoved = false;
+  });
+  svgEl.addEventListener('mousemove', () => { touchMoved = true; });
+  svgEl.addEventListener('mouseup', e => {
+    if (!selectedFinger || !barreDragStart) return;
+    const p = svgPoint(e.clientX, e.clientY);
+    if (!touchMoved) {
+      placeDot(barreDragStart.string, barreDragStart.fret, selectedFinger);
+    } else if (barreDragStart.fret === p.fret && barreDragStart.string !== p.string) {
+      placeBarre(barreDragStart.fret, barreDragStart.string, p.string, selectedFinger);
+    } else {
+      placeDot(p.string, p.fret, selectedFinger);
+    }
+    barreDragStart = null;
+  });
 }
 
-function placeDot(finger, x, y, padL, padT, strGap, fretGap, STRINGS, FRETS) {
-  // Find nearest string
-  let bestString = 0, bestDist = Infinity;
-  for (let s = 0; s < STRINGS; s++) {
-    const sx = padL + s * strGap;
-    const d = Math.abs(x - sx);
-    if (d < bestDist) { bestDist = d; bestString = s; }
-  }
+function placeDot(string, fret, finger) {
+  // Remove any existing dot at same position
+  editorDots = editorDots.filter(d => !(d.string === string && d.fret === fret));
+  editorDots.push({ string, fret, finger });
+  renderEditor();
+}
 
-  // Find nearest fret center
-  let bestFret = 1, bestFDist = Infinity;
-  for (let f = 1; f <= FRETS; f++) {
-    const fy = padT + (f - 0.5) * fretGap;
-    const d = Math.abs(y - fy);
-    if (d < bestFDist) { bestFDist = d; bestFret = f; }
-  }
-
-  // Remove existing dot on same position
-  editorDots = editorDots.filter(d => !(d.string === bestString && d.fret === bestFret));
-  // Remove existing dot with same finger
-  editorDots = editorDots.filter(d => d.finger !== finger);
-
-  editorDots.push({ string: bestString, fret: bestFret, finger });
+function placeBarre(fret, s1, s2, finger) {
+  const fromString = Math.min(s1, s2);
+  const toString   = Math.max(s1, s2);
+  // Remove existing barre at same fret with same finger
+  editorBarres = editorBarres.filter(b => !(b.fret === fret && b.finger === finger));
+  editorBarres.push({ fret, fromString, toString, finger });
   renderEditor();
 }
 
 // =====================
-// Save Chord
+// Save
 // =====================
 document.getElementById('btn-save-chord').addEventListener('click', async () => {
   const note = document.getElementById('edit-note').value;
   const name = document.getElementById('edit-name').value.trim();
-
-  if (!name) {
-    alert('Please enter a chord name.');
-    return;
-  }
+  if (!name) { alert('Please enter a chord name.'); return; }
 
   const data = {
     uid: currentUser.uid,
-    note,
-    name,
+    note, name,
     strings: editorStrings,
-    dots: editorDots
+    dots:    editorDots,
+    barres:  editorBarres
   };
 
   if (editingChord) {
@@ -491,9 +537,7 @@ document.getElementById('btn-save-chord').addEventListener('click', async () => 
   }
 
   currentNote = note;
-  document.getElementById('chord-list-title').textContent = note;
-  await loadChords(note);
-  showScreen('chords');
+  await loadAndShowChords(note);
 });
 
 // =====================
