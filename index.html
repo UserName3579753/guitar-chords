@@ -36,7 +36,15 @@
         <button id="btn-logout" class="btn-icon" title="Sign out">⏻</button>
       </div>
       <div class="home-content">
-        <p class="home-label">Select a root note</p>
+        <!-- Mode toggle -->
+        <div class="mode-toggle-wrapper">
+          <div class="mode-toggle" id="mode-toggle">
+            <button class="mode-btn active" data-mode="view">📖 View</button>
+            <button class="mode-btn" data-mode="edit">✏️ Edit</button>
+          </div>
+          <p class="mode-hint" id="mode-hint">Select a note to view chords</p>
+        </div>
+        <!-- Note buttons -->
         <div class="note-grid">
           <button class="note-btn" data-note="A">A</button>
           <button class="note-btn" data-note="B">B (H)</button>
@@ -46,16 +54,15 @@
           <button class="note-btn" data-note="F">F</button>
           <button class="note-btn" data-note="G">G</button>
         </div>
-        <button id="btn-add-chord" class="btn-add">+ Add New Chord</button>
       </div>
     </div>
 
-    <!-- Chord View Screen -->
+    <!-- Chord View Screen (read-only) -->
     <div id="screen-chords" class="screen">
       <div class="top-bar">
         <button class="btn-back" onclick="showScreen('home')">‹ Back</button>
         <h2 id="chord-list-title" class="top-bar-title"></h2>
-        <button id="btn-add-from-view" class="btn-save">+ New</button>
+        <div style="width:60px"></div>
       </div>
       <div class="chord-scroll-wrapper">
         <div id="chord-carousel" class="chord-carousel"></div>
@@ -73,6 +80,16 @@
           </div>
         </div>
       </div>
+    </div>
+
+    <!-- Edit/Manage Screen (list of chords to edit/delete + add new) -->
+    <div id="screen-manage" class="screen">
+      <div class="top-bar">
+        <button class="btn-back" onclick="showScreen('home')">‹ Back</button>
+        <h2 id="manage-title" class="top-bar-title"></h2>
+        <button id="btn-add-new" class="btn-save">+ New</button>
+      </div>
+      <div id="manage-list" class="manage-list"></div>
     </div>
 
     <!-- Add/Edit Chord Screen -->
