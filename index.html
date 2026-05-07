@@ -14,6 +14,7 @@
 </head>
 <body>
   <div id="app">
+
     <!-- Login Screen -->
     <div id="screen-login" class="screen active">
       <div class="login-bg"></div>
@@ -49,19 +50,20 @@
       </div>
     </div>
 
-    <!-- Chord List Screen -->
+    <!-- Chord View Screen -->
     <div id="screen-chords" class="screen">
       <div class="top-bar">
         <button class="btn-back" onclick="showScreen('home')">‹ Back</button>
         <h2 id="chord-list-title" class="top-bar-title"></h2>
-        <div style="width:40px"></div>
+        <button id="btn-add-from-view" class="btn-save">+ New</button>
       </div>
       <div class="chord-scroll-wrapper">
         <div id="chord-carousel" class="chord-carousel"></div>
       </div>
+      <div id="scroll-dots" class="scroll-dots"></div>
       <div class="hand-fixed">
         <div class="hand-container">
-          <img src="hand.jpg" alt="Hand diagram" style="width:110px; height:auto;" />
+          <img src="hand.jpg" alt="Hand diagram" style="width:100px; height:auto;" />
           <div class="hand-legend">
             <span class="legend-item"><span class="dot red"></span>Index</span>
             <span class="legend-item"><span class="dot green"></span>Middle</span>
@@ -81,6 +83,7 @@
         <button id="btn-save-chord" class="btn-save">Save</button>
       </div>
       <div class="edit-content">
+
         <div class="edit-fields">
           <div class="field-group">
             <label>Root Note</label>
@@ -100,26 +103,27 @@
           </div>
         </div>
 
+        <div class="finger-palette">
+          <p class="palette-label">1. Select a finger:</p>
+          <div class="palette-fingers" id="palette-fingers">
+            <div class="palette-dot red"    data-finger="1" data-color="#e53935">1</div>
+            <div class="palette-dot green"  data-finger="2" data-color="#43a047">2</div>
+            <div class="palette-dot blue"   data-finger="3" data-color="#1e88e5">3</div>
+            <div class="palette-dot yellow" data-finger="4" data-color="#f9a825">4</div>
+            <div class="palette-dot gray"   data-finger="T" data-color="#555555">T</div>
+          </div>
+          <p class="palette-label" style="margin-top:8px;">2. Tap a fret — or drag across strings for a barre.</p>
+          <p class="palette-hint">Tap a placed dot or barre to remove it.</p>
+        </div>
+
         <div class="diagram-editor">
           <div id="editor-string-labels" class="editor-string-labels"></div>
           <div id="editor-diagram" class="editor-diagram"></div>
         </div>
 
-        <div class="finger-palette">
-          <p class="palette-label">Drag a finger onto the diagram:</p>
-          <div class="palette-fingers">
-            <div class="palette-dot red" draggable="true" data-finger="1" data-color="#e53935">1</div>
-            <div class="palette-dot green" draggable="true" data-finger="2" data-color="#43a047">2</div>
-            <div class="palette-dot blue" draggable="true" data-finger="3" data-color="#1e88e5">3</div>
-            <div class="palette-dot yellow" draggable="true" data-finger="4" data-color="#f9a825">4</div>
-            <div class="palette-dot gray" draggable="true" data-finger="T" data-color="#555">T</div>
-          </div>
-          <p class="palette-hint">Tap a placed dot to remove it</p>
-        </div>
-
         <div class="hand-fixed">
           <div class="hand-container">
-            <img src="hand.jpg" alt="Hand diagram" style="width:110px; height:auto;" />
+            <img src="hand.jpg" alt="Hand diagram" style="width:100px; height:auto;" />
             <div class="hand-legend">
               <span class="legend-item"><span class="dot red"></span>Index</span>
               <span class="legend-item"><span class="dot green"></span>Middle</span>
@@ -129,10 +133,11 @@
             </div>
           </div>
         </div>
+
       </div>
     </div>
-  </div>
 
+  </div>
   <script type="module" src="app.js"></script>
 </body>
 </html>
