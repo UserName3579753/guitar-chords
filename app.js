@@ -14,59 +14,47 @@ const firebaseConfig = {
 };
 
 const fbApp = initializeApp(firebaseConfig);
-const auth = getAuth(fbApp);
-const db = getFirestore(fbApp);
+const auth  = getAuth(fbApp);
+const db    = getFirestore(fbApp);
 
 // =====================
 // Constants
 // =====================
 const NOTE_ORDER = ['A', 'B', 'C', 'D', 'E', 'F', 'G'];
-
 const FINGER_COLORS = {
-  '1': '#e53935',
-  '2': '#43a047',
-  '3': '#1e88e5',
-  '4': '#f9a825',
-  'T': '#555555'
+  '1': '#e53935', '2': '#43a047', '3': '#1e88e5', '4': '#f9a825', 'T': '#555555'
 };
 
-// Diagram dimensions (view mode — taller cells)
-const V = {
-  STRINGS: 6, FRETS: 5,
-  CELL_W: 44, CELL_H: 56,
-  PAD_L: 28, PAD_T: 36, PAD_R: 14, PAD_B: 14
-};
-V.W = V.PAD_L + V.CELL_W * (V.STRINGS - 1) + V.PAD_R;
-V.H = V.PAD_T + V.CELL_H * V.FRETS + V.PAD_B;
+// View diagram — tall cells, no action buttons
+const V = { STRINGS:6, FRETS:5, CW:44, CH:72, PL:28, PT:36, PR:14, PB:10 };
+V.W = V.PL + V.CW*(V.STRINGS-1) + V.PR;
+V.H = V.PT + V.CH*V.FRETS + V.PB;
 
-// Diagram dimensions (edit mode — slightly smaller to fit screen)
-const E = {
-  STRINGS: 6, FRETS: 5,
-  CELL_W: 44, CELL_H: 48,
-  PAD_L: 28, PAD_T: 14, PAD_R: 14, PAD_B: 10
-};
-E.W = E.PAD_L + E.CELL_W * (E.STRINGS - 1) + E.PAD_R;
-E.H = E.PAD_T + E.CELL_H * E.FRETS + E.PAD_B;
+// Edit diagram — slightly smaller to fit screen
+const E = { STRINGS:6, FRETS:5, CW:44, CH:48, PL:28, PT:14, PR:14, PB:10 };
+E.W = E.PL + E.CW*(E.STRINGS-1) + E.PR;
+E.H = E.PT + E.CH*E.FRETS + E.PB;
 
 // =====================
 // State
 // =====================
-let currentUser = null;
-let currentNote = null;       // which note was tapped on home screen
-let allChords = [];           // all chords for this user, sorted
-let editingChord = null;
+let currentUser   = null;
+let currentNote   = null;
+let allChords     = [];      // cached — only reloaded when needed
+let chordsLoaded  = false;
+let appMode       = 'view';  // 'view' or 'edit'
+let editingChord  = null;
 
 // Editor state
 let editorStrings = ['x','o','o','o','o','o'];
-let editorDots = [];    // {string, fret, finger}  — single dot
-let editorBarres = [];  // {fret, fromString, toString, finger}
+let editorDots    = [];
+let editorBarres  = [];
 let selectedFinger = null;
-
-// Barre drag tracking
-let barreDragStart = null; // {string, fret} when touch/mousedown starts
+let touchStartPos  = null;
+let touchMoved     = false;
 
 // =====================
-// Screen nav
+// Screen navigation
 // =====================
 window.showScreen = function(name) {
   document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
@@ -77,13 +65,16 @@ window.showScreen = function(name) {
 // Auth
 // =====================
 document.getElementById('btn-google-login').addEventListener('click', async () => {
-  try {
-    await signInWithPopup(auth, new GoogleAuthProvider());
-  } catch (e) { alert('Login failed: ' + e.message); }
+  try { await signInWithPopup(auth, new GoogleAuthProvider()); }
+  catch (e) { alert('Login failed: ' + e.message); }
 });
 
 document.getElementById('btn-logout').addEventListener('click', async () => {
-  if (confirm('Sign out?')) await signOut(auth);
+  if (confirm('Sign out?')) {
+    chordsLoaded = false;
+    allChords = [];
+    await signOut(auth);
+  }
 });
 
 onAuthStateChanged(auth, user => {
@@ -93,167 +84,145 @@ onAuthStateChanged(auth, user => {
 });
 
 // =====================
-// Home: note buttons
+// Home: mode toggle
 // =====================
-document.querySelectorAll('.note-btn').forEach(btn => {
+document.querySelectorAll('.mode-btn').forEach(btn => {
   btn.addEventListener('click', () => {
-    currentNote = btn.dataset.note;
-    loadAndShowChords(currentNote);
+    appMode = btn.dataset.mode;
+    document.querySelectorAll('.mode-btn').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    document.getElementById('mode-hint').textContent =
+      appMode === 'view' ? 'Select a note to view chords' : 'Select a note to manage chords';
   });
 });
 
-document.getElementById('btn-add-chord').addEventListener('click', () => openEditor(null));
-document.getElementById('btn-add-from-view').addEventListener('click', () => openEditor(null));
+// =====================
+// Home: note buttons
+// =====================
+document.querySelectorAll('.note-btn').forEach(btn => {
+  btn.addEventListener('click', async () => {
+    currentNote = btn.dataset.note;
+    await ensureChordsLoaded();
+    if (appMode === 'view') {
+      showViewScreen(currentNote);
+    } else {
+      showManageScreen(currentNote);
+    }
+  });
+});
 
 // =====================
-// Load all chords & show carousel
+// Load chords (with cache)
 // =====================
-async function loadAndShowChords(scrollToNote) {
-  const carousel = document.getElementById('chord-carousel');
-  carousel.innerHTML = '<div class="chord-card"><div class="empty-state"><p>Loading…</p></div></div>';
-  showScreen('chords');
-
+async function ensureChordsLoaded(forceReload = false) {
+  if (chordsLoaded && !forceReload) return;
   const q = query(collection(db, 'chords'), where('uid', '==', currentUser.uid));
   const snap = await getDocs(q);
   allChords = [];
   snap.forEach(d => allChords.push({ id: d.id, ...d.data() }));
-
-  // Sort alphabetically by chord name, then by note order
   allChords.sort((a, b) => {
     const ni = NOTE_ORDER.indexOf(a.note) - NOTE_ORDER.indexOf(b.note);
     if (ni !== 0) return ni;
     return a.name.localeCompare(b.name);
   });
-
-  renderCarousel(scrollToNote);
+  chordsLoaded = true;
 }
 
-function renderCarousel(scrollToNote) {
-  const carousel = document.getElementById('chord-carousel');
-  const dotsEl = document.getElementById('scroll-dots');
-  carousel.innerHTML = '';
-  dotsEl.innerHTML = '';
+// =====================
+// View screen
+// =====================
+function showViewScreen(scrollToNote) {
+  const noteChords = allChords.filter(c => c.note === scrollToNote);
+  document.getElementById('chord-list-title').textContent = scrollToNote;
 
-  // Update title
-  document.getElementById('chord-list-title').textContent = currentNote || 'All Chords';
+  const carousel = document.getElementById('chord-carousel');
+  const dotsEl   = document.getElementById('scroll-dots');
+  carousel.innerHTML = '';
+  dotsEl.innerHTML   = '';
 
   if (allChords.length === 0) {
     carousel.innerHTML = `<div class="chord-card"><div class="empty-state">
-      <p>No chords yet.<br/>Add your first one!</p>
-      <button class="btn-add-first" onclick="openEditor(null)">+ Add Chord</button>
+      <p>No chords yet.<br/>Switch to Edit mode to add some!</p>
     </div></div>`;
+    showScreen('chords');
     return;
   }
 
+  // Show ALL chords sorted, but scroll to the first of the selected note
   allChords.forEach((chord, i) => {
     const card = document.createElement('div');
     card.className = 'chord-card';
+    card.dataset.note = chord.note;
     card.innerHTML = `
       <div class="chord-card-name">${escapeHtml(chord.name)}</div>
-      ${buildDiagramSVG(chord, V)}
-      <div class="chord-card-actions">
-        <button class="btn-edit-chord" data-i="${i}">✏️ Edit</button>
-        <button class="btn-delete-chord" data-i="${i}">🗑 Delete</button>
-      </div>`;
+      ${buildDiagramSVG(chord, V)}`;
     carousel.appendChild(card);
   });
 
-  // Scroll dots
+  // Dots
   allChords.forEach((_, i) => {
     const d = document.createElement('div');
     d.className = 'scroll-dot' + (i === 0 ? ' active' : '');
     dotsEl.appendChild(d);
   });
 
+  // Update title on scroll
   carousel.addEventListener('scroll', () => {
     const idx = Math.round(carousel.scrollLeft / carousel.clientWidth);
-    document.querySelectorAll('.scroll-dot').forEach((d, i) => {
-      d.classList.toggle('active', i === idx);
-    });
-  });
-
-  carousel.querySelectorAll('.btn-edit-chord').forEach(btn => {
-    btn.addEventListener('click', () => openEditor(allChords[+btn.dataset.i]));
-  });
-  carousel.querySelectorAll('.btn-delete-chord').forEach(btn => {
-    btn.addEventListener('click', () => deleteChord(allChords[+btn.dataset.i]));
-  });
-
-  // Scroll to the first chord matching scrollToNote
-  if (scrollToNote) {
-    const idx = allChords.findIndex(c => c.note === scrollToNote);
-    if (idx > 0) {
-      requestAnimationFrame(() => {
-        carousel.scrollLeft = idx * carousel.clientWidth;
-        document.querySelectorAll('.scroll-dot').forEach((d, i) => {
-          d.classList.toggle('active', i === idx);
-        });
-      });
+    document.querySelectorAll('.scroll-dot').forEach((d, i) => d.classList.toggle('active', i === idx));
+    if (allChords[idx]) {
+      document.getElementById('chord-list-title').textContent = allChords[idx].note;
     }
+  });
+
+  showScreen('chords');
+
+  // Scroll to first chord of selected note
+  const targetIdx = allChords.findIndex(c => c.note === scrollToNote);
+  if (targetIdx > 0) {
+    requestAnimationFrame(() => {
+      carousel.scrollLeft = targetIdx * carousel.clientWidth;
+      document.querySelectorAll('.scroll-dot').forEach((d, i) => d.classList.toggle('active', i === targetIdx));
+    });
   }
 }
 
 // =====================
-// Build diagram SVG (view & edit)
+// Manage screen
 // =====================
-function buildDiagramSVG(chord, dim) {
-  const strings = chord.strings || ['o','o','o','o','o','o'];
-  const dots    = chord.dots    || [];
-  const barres  = chord.barres  || [];
+function showManageScreen(note) {
+  document.getElementById('manage-title').textContent = note;
+  const list = document.getElementById('manage-list');
+  list.innerHTML = '';
 
-  const { STRINGS, FRETS, CELL_W, CELL_H, PAD_L, PAD_T, W, H } = dim;
+  const noteChords = allChords.filter(c => c.note === note);
 
-  let svg = `<svg class="diagram-svg" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg">`;
-
-  // Nut (double line)
-  svg += `<rect x="${PAD_L}" y="${PAD_T}" width="${CELL_W*(STRINGS-1)}" height="5" fill="#c8a96e" rx="2"/>`;
-  svg += `<rect x="${PAD_L}" y="${PAD_T+7}" width="${CELL_W*(STRINGS-1)}" height="2" fill="#c8a96e" rx="1"/>`;
-
-  // Fret lines
-  for (let f = 1; f <= FRETS; f++) {
-    const y = PAD_T + f * CELL_H;
-    svg += `<line x1="${PAD_L}" y1="${y}" x2="${PAD_L+CELL_W*(STRINGS-1)}" y2="${y}" stroke="#3a4a6a" stroke-width="1.5"/>`;
+  if (noteChords.length === 0) {
+    list.innerHTML = `<div class="manage-empty">No chords for ${note} yet.<br/>Tap "+ New" to add one.</div>`;
+  } else {
+    noteChords.forEach(chord => {
+      const item = document.createElement('div');
+      item.className = 'manage-item';
+      item.innerHTML = `
+        <div>
+          <div class="manage-item-name">${escapeHtml(chord.name)}</div>
+          <div class="manage-item-note">${chord.note}</div>
+        </div>
+        <div class="manage-item-actions">
+          <button class="btn-edit-chord">✏️ Edit</button>
+          <button class="btn-delete-chord">🗑 Delete</button>
+        </div>`;
+      item.querySelector('.btn-edit-chord').addEventListener('click', () => openEditor(chord));
+      item.querySelector('.btn-delete-chord').addEventListener('click', () => deleteChord(chord));
+      list.appendChild(item);
+    });
   }
 
-  // String lines
-  for (let s = 0; s < STRINGS; s++) {
-    const x = PAD_L + s * CELL_W;
-    svg += `<line x1="${x}" y1="${PAD_T}" x2="${x}" y2="${PAD_T+CELL_H*FRETS}" stroke="#d4af6a" stroke-width="1.5"/>`;
-  }
-
-  // String labels (O/X)
-  strings.forEach((label, s) => {
-    const x = PAD_L + s * CELL_W;
-    const color = label === 'o' ? '#aed6f1' : '#e53935';
-    svg += `<text x="${x}" y="${PAD_T - 10}" text-anchor="middle" fill="${color}" font-size="14" font-weight="700" font-family="Oswald">${label.toUpperCase()}</text>`;
-  });
-
-  // Barres — drawn as rounded rectangles
-  barres.forEach(barre => {
-    const r = CELL_H * 0.38; // same radius as dots
-    const x1 = PAD_L + barre.fromString * CELL_W;
-    const x2 = PAD_L + barre.toString  * CELL_W;
-    const cy = PAD_T + (barre.fret - 0.5) * CELL_H;
-    const color = FINGER_COLORS[barre.finger] || '#888';
-    svg += `<rect x="${x1 - r}" y="${cy - r}" width="${(x2 - x1) + r*2}" height="${r*2}" rx="${r}" fill="${color}"/>`;
-    // Finger label in center
-    const mx = (x1 + x2) / 2;
-    svg += `<text x="${mx}" y="${cy + 5}" text-anchor="middle" fill="white" font-size="13" font-weight="700" font-family="Oswald">${barre.finger}</text>`;
-  });
-
-  // Single dots
-  dots.forEach(dot => {
-    const cx = PAD_L + dot.string * CELL_W;
-    const cy = PAD_T + (dot.fret - 0.5) * CELL_H;
-    const r  = CELL_H * 0.38;
-    const color = FINGER_COLORS[dot.finger] || '#888';
-    svg += `<circle cx="${cx}" cy="${cy}" r="${r}" fill="${color}"/>`;
-    svg += `<text x="${cx}" y="${cy + 5}" text-anchor="middle" fill="white" font-size="13" font-weight="700" font-family="Oswald">${dot.finger}</text>`;
-  });
-
-  svg += '</svg>';
-  return svg;
+  showScreen('manage');
 }
+
+// + New button on manage screen
+document.getElementById('btn-add-new').addEventListener('click', () => openEditor(null));
 
 // =====================
 // Delete chord
@@ -261,36 +230,34 @@ function buildDiagramSVG(chord, dim) {
 async function deleteChord(chord) {
   if (!confirm(`Delete "${chord.name}"?`)) return;
   await deleteDoc(doc(db, 'chords', chord.id));
-  await loadAndShowChords(currentNote);
+  await ensureChordsLoaded(true); // force reload
+  showManageScreen(currentNote);
 }
 
 // =====================
 // Editor
 // =====================
 window.openEditor = function(chord) {
-  editingChord = chord;
+  editingChord   = chord;
   selectedFinger = null;
 
   if (chord) {
     document.getElementById('edit-title').textContent = 'Edit Chord';
     document.getElementById('edit-note').value = chord.note;
-    document.getElementById('edit-name').value  = chord.name;
+    document.getElementById('edit-name').value = chord.name;
     editorStrings = chord.strings ? [...chord.strings] : ['o','o','o','o','o','o'];
     editorDots    = chord.dots    ? chord.dots.map(d => ({...d}))   : [];
     editorBarres  = chord.barres  ? chord.barres.map(b => ({...b})) : [];
   } else {
     document.getElementById('edit-title').textContent = 'New Chord';
     document.getElementById('edit-note').value = currentNote || 'A';
-    document.getElementById('edit-name').value  = '';
+    document.getElementById('edit-name').value = '';
     editorStrings = ['x','o','o','o','o','o'];
     editorDots    = [];
     editorBarres  = [];
   }
 
-  document.getElementById('btn-edit-back').onclick = () => {
-    if (allChords.length > 0) showScreen('chords');
-    else showScreen('home');
-  };
+  document.getElementById('btn-edit-back').onclick = () => showManageScreen(currentNote);
 
   renderEditor();
   showScreen('edit');
@@ -312,20 +279,17 @@ function renderPalette() {
   });
 }
 
-// String O/X toggle buttons
 function renderStringLabels() {
   const container = document.getElementById('editor-string-labels');
   container.innerHTML = '';
-
   const spacer = document.createElement('div');
-  spacer.style.width = E.PAD_L + 'px';
+  spacer.style.width = E.PL + 'px';
   container.appendChild(spacer);
-
   editorStrings.forEach((val, s) => {
     const btn = document.createElement('button');
     btn.className = 'string-label-btn ' + (val === 'o' ? 'open' : 'muted');
     btn.textContent = val.toUpperCase();
-    btn.style.width  = E.CELL_W + 'px';
+    btn.style.width  = E.CW + 'px';
     btn.style.height = '28px';
     btn.addEventListener('click', () => {
       editorStrings[s] = editorStrings[s] === 'o' ? 'x' : 'o';
@@ -336,57 +300,57 @@ function renderStringLabels() {
 }
 
 // =====================
-// Editor diagram with tap + barre drag
+// Editor diagram
 // =====================
 function renderEditorDiagram() {
   const container = document.getElementById('editor-diagram');
   container.innerHTML = '';
 
-  const { STRINGS, FRETS, CELL_W, CELL_H, PAD_L, PAD_T, W, H } = E;
+  const { STRINGS, FRETS, CW, CH, PL, PT, W, H } = E;
 
   let svg = `<svg width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg" id="editor-svg" style="touch-action:none;">`;
 
   // Nut
-  svg += `<rect x="${PAD_L}" y="${PAD_T}" width="${CELL_W*(STRINGS-1)}" height="5" fill="#c8a96e" rx="2"/>`;
-  svg += `<rect x="${PAD_L}" y="${PAD_T+7}" width="${CELL_W*(STRINGS-1)}" height="2" fill="#c8a96e" rx="1"/>`;
+  svg += `<rect x="${PL}" y="${PT}" width="${CW*(STRINGS-1)}" height="5" fill="#c8a96e" rx="2"/>`;
+  svg += `<rect x="${PL}" y="${PT+7}" width="${CW*(STRINGS-1)}" height="2" fill="#c8a96e" rx="1"/>`;
 
   // Fret lines
   for (let f = 1; f <= FRETS; f++) {
-    const y = PAD_T + f * CELL_H;
-    svg += `<line x1="${PAD_L}" y1="${y}" x2="${PAD_L+CELL_W*(STRINGS-1)}" y2="${y}" stroke="#3a4a6a" stroke-width="1.5"/>`;
+    const y = PT + f * CH;
+    svg += `<line x1="${PL}" y1="${y}" x2="${PL+CW*(STRINGS-1)}" y2="${y}" stroke="#3a4a6a" stroke-width="1.5"/>`;
   }
 
   // String lines
   for (let s = 0; s < STRINGS; s++) {
-    const x = PAD_L + s * CELL_W;
-    svg += `<line x1="${x}" y1="${PAD_T}" x2="${x}" y2="${PAD_T+CELL_H*FRETS}" stroke="#d4af6a" stroke-width="1.5"/>`;
+    const x = PL + s * CW;
+    svg += `<line x1="${x}" y1="${PT}" x2="${x}" y2="${PT+CH*FRETS}" stroke="#d4af6a" stroke-width="1.5"/>`;
   }
 
   // Invisible tap zones
   for (let s = 0; s < STRINGS; s++) {
     for (let f = 1; f <= FRETS; f++) {
-      const cx = PAD_L + s * CELL_W;
-      const cy = PAD_T + (f - 0.5) * CELL_H;
-      svg += `<rect x="${cx - CELL_W/2}" y="${cy - CELL_H/2}" width="${CELL_W}" height="${CELL_H}" fill="transparent" class="tap-cell" data-s="${s}" data-f="${f}"/>`;
+      const cx = PL + s * CW;
+      const cy = PT + (f-0.5) * CH;
+      svg += `<rect x="${cx-CW/2}" y="${cy-CH/2}" width="${CW}" height="${CH}" fill="transparent" class="tap-cell" data-s="${s}" data-f="${f}"/>`;
     }
   }
 
-  // Drawn barres
+  // Barres
   editorBarres.forEach((barre, idx) => {
-    const r  = CELL_H * 0.38;
-    const x1 = PAD_L + barre.fromString * CELL_W;
-    const x2 = PAD_L + barre.toString   * CELL_W;
-    const cy = PAD_T + (barre.fret - 0.5) * CELL_H;
+    const r  = CH * 0.38;
+    const x1 = PL + barre.fromString * CW;
+    const x2 = PL + barre.toString   * CW;
+    const cy = PT + (barre.fret-0.5) * CH;
     const color = FINGER_COLORS[barre.finger] || '#888';
     svg += `<rect x="${x1-r}" y="${cy-r}" width="${(x2-x1)+r*2}" height="${r*2}" rx="${r}" fill="${color}" class="placed-barre" data-idx="${idx}" style="cursor:pointer"/>`;
     svg += `<text x="${(x1+x2)/2}" y="${cy+5}" text-anchor="middle" fill="white" font-size="13" font-weight="700" font-family="Oswald" pointer-events="none">${barre.finger}</text>`;
   });
 
-  // Drawn dots
+  // Dots
   editorDots.forEach((dot, idx) => {
-    const cx = PAD_L + dot.string * CELL_W;
-    const cy = PAD_T + (dot.fret - 0.5) * CELL_H;
-    const r  = CELL_H * 0.38;
+    const cx = PL + dot.string * CW;
+    const cy = PT + (dot.fret-0.5) * CH;
+    const r  = CH * 0.38;
     const color = FINGER_COLORS[dot.finger] || '#888';
     svg += `<circle cx="${cx}" cy="${cy}" r="${r}" fill="${color}" class="placed-dot" data-idx="${idx}" style="cursor:pointer"/>`;
     svg += `<text x="${cx}" y="${cy+5}" text-anchor="middle" fill="white" font-size="13" font-weight="700" font-family="Oswald" pointer-events="none">${dot.finger}</text>`;
@@ -397,7 +361,7 @@ function renderEditorDiagram() {
 
   const svgEl = container.querySelector('svg');
 
-  // Remove placed dot on tap
+  // Remove placed dot
   container.querySelectorAll('.placed-dot').forEach(el => {
     el.addEventListener('click', e => {
       e.stopPropagation();
@@ -406,7 +370,7 @@ function renderEditorDiagram() {
     });
   });
 
-  // Remove placed barre on tap
+  // Remove placed barre
   container.querySelectorAll('.placed-barre').forEach(el => {
     el.addEventListener('click', e => {
       e.stopPropagation();
@@ -415,40 +379,12 @@ function renderEditorDiagram() {
     });
   });
 
-  // ---- Touch / mouse interaction ----
-  // We track touchstart/touchend to detect tap vs drag
-
-  let touchStartString = null;
-  let touchStartFret   = null;
-  let touchMoved       = false;
-
-  function svgPoint(clientX, clientY) {
-    const rect = svgEl.getBoundingClientRect();
-    const x = clientX - rect.left;
-    const y = clientY - rect.top;
-    // Find nearest string
-    let bestS = 0, bestSD = Infinity;
-    for (let s = 0; s < STRINGS; s++) {
-      const d = Math.abs(x - (PAD_L + s * CELL_W));
-      if (d < bestSD) { bestSD = d; bestS = s; }
-    }
-    // Find nearest fret row
-    let bestF = 1, bestFD = Infinity;
-    for (let f = 1; f <= FRETS; f++) {
-      const d = Math.abs(y - (PAD_T + (f - 0.5) * CELL_H));
-      if (d < bestFD) { bestFD = d; bestF = f; }
-    }
-    return { string: bestS, fret: bestF };
-  }
-
-  // TOUCH
+  // ---- Touch ----
   svgEl.addEventListener('touchstart', e => {
     if (!selectedFinger) return;
     e.preventDefault();
     const t = e.touches[0];
-    const p = svgPoint(t.clientX, t.clientY);
-    touchStartString = p.string;
-    touchStartFret   = p.fret;
+    touchStartPos = svgPoint(svgEl, t.clientX, t.clientY);
     touchMoved = false;
   }, { passive: false });
 
@@ -458,64 +394,149 @@ function renderEditorDiagram() {
   }, { passive: false });
 
   svgEl.addEventListener('touchend', e => {
-    if (!selectedFinger) return;
+    if (!selectedFinger || !touchStartPos) return;
     e.preventDefault();
     const t = e.changedTouches[0];
-    const p = svgPoint(t.clientX, t.clientY);
+    const endPos = svgPoint(svgEl, t.clientX, t.clientY);
 
     if (!touchMoved) {
-      // Tap = single dot
-      placeDot(touchStartString, touchStartFret, selectedFinger);
+      placeDot(touchStartPos.string, touchStartPos.fret, selectedFinger);
+    } else if (touchStartPos.fret === endPos.fret && touchStartPos.string !== endPos.string) {
+      placeBarre(touchStartPos.fret, touchStartPos.string, endPos.string, selectedFinger);
     } else {
-      // Drag = barre (same fret, different strings)
-      if (touchStartFret === p.fret && touchStartString !== p.string) {
-        placeBarre(touchStartFret, touchStartString, p.string, selectedFinger);
-      } else {
-        placeDot(p.string, p.fret, selectedFinger);
-      }
+      placeDot(endPos.string, endPos.fret, selectedFinger);
     }
+    touchStartPos = null;
   }, { passive: false });
 
-  // MOUSE (for PC testing)
+  // ---- Mouse (PC) ----
+  let mouseStart = null;
+  let mouseMoved = false;
   svgEl.addEventListener('mousedown', e => {
     if (!selectedFinger) return;
-    const p = svgPoint(e.clientX, e.clientY);
-    barreDragStart = p;
-    touchMoved = false;
+    mouseStart = svgPoint(svgEl, e.clientX, e.clientY);
+    mouseMoved = false;
   });
-  svgEl.addEventListener('mousemove', () => { touchMoved = true; });
+  svgEl.addEventListener('mousemove', () => { mouseMoved = true; });
   svgEl.addEventListener('mouseup', e => {
-    if (!selectedFinger || !barreDragStart) return;
-    const p = svgPoint(e.clientX, e.clientY);
-    if (!touchMoved) {
-      placeDot(barreDragStart.string, barreDragStart.fret, selectedFinger);
-    } else if (barreDragStart.fret === p.fret && barreDragStart.string !== p.string) {
-      placeBarre(barreDragStart.fret, barreDragStart.string, p.string, selectedFinger);
+    if (!selectedFinger || !mouseStart) return;
+    const endPos = svgPoint(svgEl, e.clientX, e.clientY);
+    if (!mouseMoved) {
+      placeDot(mouseStart.string, mouseStart.fret, selectedFinger);
+    } else if (mouseStart.fret === endPos.fret && mouseStart.string !== endPos.string) {
+      placeBarre(mouseStart.fret, mouseStart.string, endPos.string, selectedFinger);
     } else {
-      placeDot(p.string, p.fret, selectedFinger);
+      placeDot(endPos.string, endPos.fret, selectedFinger);
     }
-    barreDragStart = null;
+    mouseStart = null;
   });
 }
 
+function svgPoint(svgEl, clientX, clientY) {
+  const rect = svgEl.getBoundingClientRect();
+  const x = clientX - rect.left;
+  const y = clientY - rect.top;
+  let bestS = 0, bestSD = Infinity;
+  for (let s = 0; s < E.STRINGS; s++) {
+    const d = Math.abs(x - (E.PL + s * E.CW));
+    if (d < bestSD) { bestSD = d; bestS = s; }
+  }
+  let bestF = 1, bestFD = Infinity;
+  for (let f = 1; f <= E.FRETS; f++) {
+    const d = Math.abs(y - (E.PT + (f-0.5) * E.CH));
+    if (d < bestFD) { bestFD = d; bestF = f; }
+  }
+  return { string: bestS, fret: bestF };
+}
+
 function placeDot(string, fret, finger) {
-  // Remove any existing dot at same position
-  editorDots = editorDots.filter(d => !(d.string === string && d.fret === fret));
-  editorDots.push({ string, fret, finger });
+  // Toggle: if dot already exists at same position with same finger, remove it
+  const existing = editorDots.findIndex(d => d.string === string && d.fret === fret && d.finger === finger);
+  if (existing >= 0) {
+    editorDots.splice(existing, 1);
+  } else {
+    // Remove any dot at same position (different finger)
+    editorDots = editorDots.filter(d => !(d.string === string && d.fret === fret));
+    editorDots.push({ string, fret, finger });
+  }
   renderEditor();
 }
 
 function placeBarre(fret, s1, s2, finger) {
   const fromString = Math.min(s1, s2);
   const toString   = Math.max(s1, s2);
-  // Remove existing barre at same fret with same finger
-  editorBarres = editorBarres.filter(b => !(b.fret === fret && b.finger === finger));
-  editorBarres.push({ fret, fromString, toString, finger });
+  // Toggle: if same barre exists, remove it
+  const existing = editorBarres.findIndex(b => b.fret === fret && b.finger === finger && b.fromString === fromString && b.toString === toString);
+  if (existing >= 0) {
+    editorBarres.splice(existing, 1);
+  } else {
+    editorBarres = editorBarres.filter(b => !(b.fret === fret && b.finger === finger));
+    editorBarres.push({ fret, fromString, toString, finger });
+  }
   renderEditor();
 }
 
 // =====================
-// Save
+// Build diagram SVG
+// =====================
+function buildDiagramSVG(chord, dim) {
+  const strings = chord.strings || ['o','o','o','o','o','o'];
+  const dots    = chord.dots    || [];
+  const barres  = chord.barres  || [];
+  const { STRINGS, FRETS, CW, CH, PL, PT, W, H } = dim;
+
+  let svg = `<svg class="diagram-svg" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg">`;
+
+  // Nut
+  svg += `<rect x="${PL}" y="${PT}" width="${CW*(STRINGS-1)}" height="5" fill="#c8a96e" rx="2"/>`;
+  svg += `<rect x="${PL}" y="${PT+7}" width="${CW*(STRINGS-1)}" height="2" fill="#c8a96e" rx="1"/>`;
+
+  // Fret lines
+  for (let f = 1; f <= FRETS; f++) {
+    const y = PT + f * CH;
+    svg += `<line x1="${PL}" y1="${y}" x2="${PL+CW*(STRINGS-1)}" y2="${y}" stroke="#3a4a6a" stroke-width="1.5"/>`;
+  }
+
+  // String lines
+  for (let s = 0; s < STRINGS; s++) {
+    const x = PL + s * CW;
+    svg += `<line x1="${x}" y1="${PT}" x2="${x}" y2="${PT+CH*FRETS}" stroke="#d4af6a" stroke-width="1.5"/>`;
+  }
+
+  // String labels O/X
+  strings.forEach((label, s) => {
+    const x = PL + s * CW;
+    const color = label === 'o' ? '#aed6f1' : '#e53935';
+    svg += `<text x="${x}" y="${PT-10}" text-anchor="middle" fill="${color}" font-size="14" font-weight="700" font-family="Oswald">${label.toUpperCase()}</text>`;
+  });
+
+  // Barres
+  barres.forEach(barre => {
+    const r  = CH * 0.38;
+    const x1 = PL + barre.fromString * CW;
+    const x2 = PL + barre.toString   * CW;
+    const cy = PT + (barre.fret-0.5) * CH;
+    const color = FINGER_COLORS[barre.finger] || '#888';
+    svg += `<rect x="${x1-r}" y="${cy-r}" width="${(x2-x1)+r*2}" height="${r*2}" rx="${r}" fill="${color}"/>`;
+    svg += `<text x="${(x1+x2)/2}" y="${cy+5}" text-anchor="middle" fill="white" font-size="13" font-weight="700" font-family="Oswald">${barre.finger}</text>`;
+  });
+
+  // Dots
+  dots.forEach(dot => {
+    const cx = PL + dot.string * CW;
+    const cy = PT + (dot.fret-0.5) * CH;
+    const r  = CH * 0.38;
+    const color = FINGER_COLORS[dot.finger] || '#888';
+    svg += `<circle cx="${cx}" cy="${cy}" r="${r}" fill="${color}"/>`;
+    svg += `<text x="${cx}" y="${cy+5}" text-anchor="middle" fill="white" font-size="13" font-weight="700" font-family="Oswald">${dot.finger}</text>`;
+  });
+
+  svg += '</svg>';
+  return svg;
+}
+
+// =====================
+// Save chord
 // =====================
 document.getElementById('btn-save-chord').addEventListener('click', async () => {
   const note = document.getElementById('edit-note').value;
@@ -523,8 +544,7 @@ document.getElementById('btn-save-chord').addEventListener('click', async () => 
   if (!name) { alert('Please enter a chord name.'); return; }
 
   const data = {
-    uid: currentUser.uid,
-    note, name,
+    uid: currentUser.uid, note, name,
     strings: editorStrings,
     dots:    editorDots,
     barres:  editorBarres
@@ -537,7 +557,8 @@ document.getElementById('btn-save-chord').addEventListener('click', async () => 
   }
 
   currentNote = note;
-  await loadAndShowChords(note);
+  await ensureChordsLoaded(true);
+  showManageScreen(note);
 });
 
 // =====================
