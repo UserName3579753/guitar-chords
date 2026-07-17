@@ -1,3 +1,4 @@
+<!-- v2.1 - added fretboard quiz -->
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -36,7 +37,6 @@
         <button id="btn-logout" class="btn-icon" title="Sign out">⏻</button>
       </div>
       <div class="home-content">
-        <!-- Mode toggle -->
         <div class="mode-toggle-wrapper">
           <div class="mode-toggle" id="mode-toggle">
             <button class="mode-btn active" data-mode="view">📖 View</button>
@@ -44,7 +44,6 @@
           </div>
           <p class="mode-hint" id="mode-hint">Select a note to view chords</p>
         </div>
-        <!-- Note buttons -->
         <div class="note-grid">
           <button class="note-btn" data-note="A">A</button>
           <button class="note-btn" data-note="B">B (H)</button>
@@ -54,6 +53,7 @@
           <button class="note-btn" data-note="F">F</button>
           <button class="note-btn" data-note="G">G</button>
         </div>
+        <button id="btn-quiz" class="btn-quiz-home">🎓 Fretboard Quiz</button>
       </div>
     </div>
 
@@ -82,7 +82,7 @@
       </div>
     </div>
 
-    <!-- Edit/Manage Screen (list of chords to edit/delete + add new) -->
+    <!-- Edit/Manage Screen -->
     <div id="screen-manage" class="screen">
       <div class="top-bar">
         <button class="btn-back" onclick="showScreen('home')">‹ Back</button>
@@ -100,7 +100,6 @@
         <button id="btn-save-chord" class="btn-save">Save</button>
       </div>
       <div class="edit-content">
-
         <div class="edit-fields">
           <div class="field-group">
             <label>Root Note</label>
@@ -119,7 +118,6 @@
             <input type="text" id="edit-name" placeholder="e.g. Am, C maj7, G7" />
           </div>
         </div>
-
         <div class="finger-palette">
           <p class="palette-label">1. Select a finger:</p>
           <div class="palette-fingers" id="palette-fingers">
@@ -132,12 +130,10 @@
           <p class="palette-label" style="margin-top:8px;">2. Tap a fret — or drag across strings for a barre.</p>
           <p class="palette-hint">Tap a placed dot or barre to remove it.</p>
         </div>
-
         <div class="diagram-editor">
           <div id="editor-string-labels" class="editor-string-labels"></div>
           <div id="editor-diagram" class="editor-diagram"></div>
         </div>
-
         <div class="hand-fixed">
           <div class="hand-container">
             <img src="hand.jpg" alt="Hand diagram" style="width:100px; height:auto;" />
@@ -149,6 +145,68 @@
               <span class="legend-item"><span class="dot gray"></span>Thumb</span>
             </div>
           </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Quiz Screen (landscape) -->
+    <div id="screen-quiz" class="screen">
+      <div class="quiz-layout">
+
+        <!-- LEFT PANEL: question + controls -->
+        <div class="quiz-left">
+          <div class="quiz-topbar">
+            <button class="btn-back" onclick="showScreen('home')">‹ Back</button>
+            <span class="quiz-title">Fretboard Quiz</span>
+          </div>
+
+          <!-- Toggles -->
+          <div class="quiz-toggles">
+            <div class="quiz-toggle-row">
+              <span class="quiz-toggle-label">Quiz type</span>
+              <div class="mini-toggle" id="toggle-quiz-type">
+                <button class="mini-btn active" data-val="name">Name the note</button>
+                <button class="mini-btn" data-val="find">Find the note</button>
+              </div>
+            </div>
+            <div class="quiz-toggle-row">
+              <span class="quiz-toggle-label">Notes</span>
+              <div class="mini-toggle" id="toggle-note-type">
+                <button class="mini-btn active" data-val="natural">Natural only</button>
+                <button class="mini-btn" data-val="all">All notes</button>
+              </div>
+            </div>
+            <div class="quiz-toggle-row">
+              <span class="quiz-toggle-label">Accidentals</span>
+              <div class="mini-toggle" id="toggle-accidental">
+                <button class="mini-btn active" data-val="sharp">#</button>
+                <button class="mini-btn" data-val="flat">b</button>
+              </div>
+            </div>
+            <div class="quiz-toggle-row">
+              <span class="quiz-toggle-label">String names</span>
+              <div class="mini-toggle" id="toggle-string-names">
+                <button class="mini-btn active" data-val="show">Show</button>
+                <button class="mini-btn" data-val="hide">Hide</button>
+              </div>
+            </div>
+          </div>
+
+          <!-- Question -->
+          <div class="quiz-question-box">
+            <p class="quiz-question" id="quiz-question">—</p>
+          </div>
+
+          <!-- Answer buttons (tilstand 1: name the note) -->
+          <div id="quiz-answer-panel" class="quiz-answer-panel"></div>
+
+          <!-- Next button -->
+          <button id="btn-next-question" class="btn-next">Next question ›</button>
+        </div>
+
+        <!-- RIGHT PANEL: fretboard -->
+        <div class="quiz-right">
+          <div id="quiz-fretboard-container" class="quiz-fretboard-container"></div>
         </div>
 
       </div>
