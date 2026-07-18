@@ -1,4 +1,4 @@
-// v2.1 - added fretboard quiz
+// v2.2 - strings reversed, persistent feedback, retry on wrong answer
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
 import { getAuth, GoogleAuthProvider, signInWithPopup, signOut, onAuthStateChanged }
   from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
@@ -36,12 +36,13 @@ const E = { STRINGS:6, FRETS:5, CW:44, CH:48, PL:28, PT:14, PR:14, PB:10 };
 E.W = E.PL + E.CW*(E.STRINGS-1) + E.PR;
 E.H = E.PT + E.CH*E.FRETS + E.PB;
 
-// Fretboard notes: string 0 = low E, open notes
-const OPEN_NOTES = [4, 9, 2, 7, 11, 4]; // E A D G B E as semitone indices (0=C)
+// Fretboard: string 0 = high e (top), string 5 = low E (bottom)
+// OPEN_NOTES ordered high to low: e B G D A E
+const OPEN_NOTES = [4, 11, 7, 2, 9, 4]; // e B G D A E as semitone indices (0=C)
 const NOTES_SHARP = ['C','C#','D','D#','E','F','F#','G','G#','A','A#','B'];
 const NOTES_FLAT  = ['C','Db','D','Eb','E','F','Gb','G','Ab','A','Bb','B'];
 const NATURAL_NOTES = ['C','D','E','F','G','A','B'];
-const STRING_NAMES = ['E','A','D','G','B','e']; // low to high
+const STRING_NAMES = ['e','B','G','D','A','E']; // high to low
 
 function getNoteAt(string, fret, useFlat) {
   const semitone = (OPEN_NOTES[string] + fret) % 12;
@@ -518,9 +519,9 @@ function setupQuizToggle(id, stateSetter) {
   });
 }
 
-setupQuizToggle('toggle-quiz-type',    v => { quizType = v; nextQuestion(); });
-setupQuizToggle('toggle-note-type',    v => { quizNoteType = v; nextQuestion(); });
-setupQuizToggle('toggle-accidental',   v => { quizAccidental = v; nextQuestion(); });
+setupQuizToggle('toggle-quiz-type',    v => { quizType = v; quizFeedbackDots = []; nextQuestion(); });
+setupQuizToggle('toggle-note-type',    v => { quizNoteType = v; quizFeedbackDots = []; nextQuestion(); });
+setupQuizToggle('toggle-accidental',   v => { quizAccidental = v; quizFeedbackDots = []; nextQuestion(); });
 setupQuizToggle('toggle-string-names', v => { quizShowNames = v; renderQuizFretboard(); });
 
 document.getElementById('btn-next-question').addEventListener('click', nextQuestion);
@@ -540,17 +541,19 @@ function getQuizPool() {
 
 function nextQuestion() {
   quizAnswered = false;
+  quizFeedbackDots = [];
   const pool = getQuizPool();
   quizQuestion = pool[Math.floor(Math.random() * pool.length)];
 
   const useFlat = quizAccidental === 'flat';
   const stringName = STRING_NAMES[quizQuestion.string];
   const fretDesc = quizQuestion.fret === 0 ? 'open string' : `fret ${quizQuestion.fret}`;
-  const ordinals = ['','1st','2nd','3rd','4th','5th','6th'];
+  // String number from top: string 0 = 1st (high e), string 5 = 6th (low E)
+  const ordinals = ['1st','2nd','3rd','4th','5th','6th'];
 
   if (quizType === 'name') {
     document.getElementById('quiz-question').textContent =
-      `${ordinals[quizQuestion.string + 1]} string (${stringName}), ${fretDesc} — what note is this?`;
+      `${ordinals[quizQuestion.string]} string (${stringName}), ${fretDesc} — what note is this?`;
     renderAnswerPanel();
   } else {
     document.getElementById('quiz-question').textContent =
@@ -574,23 +577,16 @@ function renderAnswerPanel() {
     btn.className = 'quiz-answer-btn';
     btn.textContent = note;
     btn.addEventListener('click', () => {
-      if (quizAnswered) return;
-      quizAnswered = true;
+      if (btn.classList.contains('correct')) return; // already got it right
       const correct = note === quizQuestion.note;
-      btn.classList.add(correct ? 'correct' : 'wrong');
-      if (!correct) {
-        // highlight correct answer
-        panel.querySelectorAll('.quiz-answer-btn').forEach(b => {
-          if (b.textContent === quizQuestion.note) b.classList.add('correct');
-        });
+      if (correct) {
+        btn.classList.add('correct');
+        quizAnswered = true;
+        renderQuizFretboard('green', quizQuestion.string, quizQuestion.fret);
+      } else {
+        btn.classList.add('wrong');
+        // Wrong stays red, user can keep trying
       }
-      // Also show dot on fretboard
-      renderQuizFretboard(correct ? 'green' : 'red', quizQuestion.string, quizQuestion.fret);
-      setTimeout(() => {
-        btn.classList.remove('correct', 'wrong');
-        panel.querySelectorAll('.quiz-answer-btn').forEach(b => b.classList.remove('correct','wrong'));
-        renderQuizFretboard();
-      }, 1500);
     });
     panel.appendChild(btn);
   });
@@ -599,16 +595,18 @@ function renderAnswerPanel() {
 // =====================
 // Quiz fretboard SVG
 // =====================
-function renderQuizFretboard(dotColor, dotString, dotFret) {
+// feedbackDots: array of {string, fret, color} to show
+let quizFeedbackDots = [];
+
+function renderQuizFretboard() {
   const container = document.getElementById('quiz-fretboard-container');
   const useFlat   = quizAccidental === 'flat';
   const showNames = quizShowNames === 'show';
 
-  // Dimensions: landscape, 12 frets + open
   const STRINGS = 6;
   const FRETS   = 12;
-  const CW = 44;  // fret width
-  const CH = 32;  // string spacing
+  const CW = 44;
+  const CH = 32;
   const PL = showNames ? 28 : 14;
   const PT = 28;
   const PR = 14;
@@ -618,7 +616,6 @@ function renderQuizFretboard(dotColor, dotString, dotFret) {
 
   let svg = `<svg viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg" style="width:100%;height:100%;touch-action:none;" id="quiz-fb-svg">`;
 
-  // Background
   svg += `<rect width="${W}" height="${H}" fill="#12172a" rx="8"/>`;
 
   // Fret lines
@@ -628,20 +625,20 @@ function renderQuizFretboard(dotColor, dotString, dotFret) {
     svg += `<line x1="${x}" y1="${PT}" x2="${x}" y2="${PT+CH*(STRINGS-1)}" stroke="#3a4a6a" stroke-width="${w}"/>`;
   }
 
-  // String lines
+  // String lines — string 0 (high e) at top, string 5 (low E) at bottom
+  // Thickness increases bottom to top (low E thickest at bottom)
   for (let s = 0; s < STRINGS; s++) {
     const y = PT + s * CH;
-    const thick = 1 + (STRINGS - 1 - s) * 0.4;
+    const thick = 0.8 + s * 0.4; // s=0 (high e) thin, s=5 (low E) thick
     svg += `<line x1="${PL}" y1="${y}" x2="${PL+CW*FRETS}" y2="${y}" stroke="#d4af6a" stroke-width="${thick}"/>`;
   }
 
-  // Fret markers (dots at 3,5,7,9,12)
+  // Fret markers
   [3,5,7,9].forEach(f => {
     const x = PL + (f - 0.5) * CW;
     const y = PT + CH * (STRINGS - 1) / 2;
     svg += `<circle cx="${x}" cy="${y}" r="4" fill="#2e3f60"/>`;
   });
-  // Double dot at 12
   const x12 = PL + 11.5 * CW;
   svg += `<circle cx="${x12}" cy="${PT + CH}" r="4" fill="#2e3f60"/>`;
   svg += `<circle cx="${x12}" cy="${PT + CH*(STRINGS-2)}" r="4" fill="#2e3f60"/>`;
@@ -660,19 +657,16 @@ function renderQuizFretboard(dotColor, dotString, dotFret) {
     svg += `<text x="${x}" y="${PT + CH*(STRINGS-1) + 16}" text-anchor="middle" fill="#8892a4" font-size="10" font-family="Oswald">${f}</text>`;
   }
 
-  // Highlight question position (mode 1: show where the question is)
+  // Highlight question position (mode 1)
   if (quizType === 'name' && quizQuestion) {
-    const qx = PL + (quizQuestion.fret === 0 ? -CW*0.5 : (quizQuestion.fret - 0.5)) * CW;
-    const qy = PT + quizQuestion.string * CH;
-    // For open string, mark left of nut
     const markX = quizQuestion.fret === 0 ? PL - 8 : PL + (quizQuestion.fret - 0.5) * CW;
-    svg += `<circle cx="${markX}" cy="${qy}" r="10" fill="none" stroke="#e94560" stroke-width="2.5"/>`;
+    const markY = PT + quizQuestion.string * CH;
+    svg += `<circle cx="${markX}" cy="${markY}" r="10" fill="none" stroke="#e94560" stroke-width="2.5"/>`;
   }
 
-  // Tap zones (mode 2: find the note)
+  // Tap zones (mode 2)
   if (quizType === 'find') {
     for (let s = 0; s < STRINGS; s++) {
-      // Open string zone
       svg += `<rect x="${PL - CW}" y="${PT + s*CH - CH/2}" width="${CW}" height="${CH}" fill="transparent" class="fb-tap" data-s="${s}" data-f="0"/>`;
       for (let f = 1; f <= FRETS; f++) {
         const x = PL + (f-1) * CW;
@@ -682,32 +676,35 @@ function renderQuizFretboard(dotColor, dotString, dotFret) {
     }
   }
 
-  // Feedback dot
-  if (dotColor && dotString !== undefined && dotFret !== undefined) {
-    const dx = dotFret === 0 ? PL - 8 : PL + (dotFret - 0.5) * CW;
-    const dy = PT + dotString * CH;
-    const fill = dotColor === 'green' ? '#43a047' : '#e53935';
+  // Persistent feedback dots
+  quizFeedbackDots.forEach(dot => {
+    const dx = dot.fret === 0 ? PL - 8 : PL + (dot.fret - 0.5) * CW;
+    const dy = PT + dot.string * CH;
+    const fill = dot.color === 'green' ? '#43a047' : '#e53935';
     svg += `<circle cx="${dx}" cy="${dy}" r="10" fill="${fill}" opacity="0.85"/>`;
-  }
+  });
 
   svg += '</svg>';
   container.innerHTML = svg;
 
-  // Attach tap handlers for 'find' mode
+  // Tap handlers for find mode
   if (quizType === 'find') {
     container.querySelectorAll('.fb-tap').forEach(el => {
-      el.addEventListener('click', e => {
+      el.addEventListener('click', () => {
         if (quizAnswered) return;
         const s = +el.dataset.s;
         const f = +el.dataset.f;
         const tappedNote = getNoteAt(s, f, useFlat);
         const correct = tappedNote === quizQuestion.note;
-        quizAnswered = true;
-        renderQuizFretboard(correct ? 'green' : 'red', s, f);
-        setTimeout(() => {
-          quizAnswered = false;
-          renderQuizFretboard();
-        }, 1500);
+
+        // Add dot to persistent list
+        quizFeedbackDots.push({ string: s, fret: f, color: correct ? 'green' : 'red' });
+
+        if (correct) {
+          quizAnswered = true;
+        }
+
+        renderQuizFretboard();
       });
     });
   }
