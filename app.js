@@ -72,12 +72,13 @@ let touchStartPos  = null;
 let touchMoved     = false;
 
 // Quiz state
-let quizType       = 'name';     // 'name' | 'find'
-let quizNoteType   = 'natural';  // 'natural' | 'all'
-let quizAccidental = 'sharp';    // 'sharp' | 'flat'
-let quizShowNames  = 'show';     // 'show' | 'hide'
-let quizQuestion   = null;       // { string, fret, note }
+let quizType       = 'name';
+let quizNoteType   = 'natural';
+let quizAccidental = 'sharp';
+let quizShowNames  = 'show';
+let quizQuestion   = null;
 let quizAnswered   = false;
+let quizFeedbackDots = [];
 
 // =====================
 // Screen navigation
@@ -96,7 +97,12 @@ document.getElementById('btn-google-login').addEventListener('click', async () =
 });
 
 // Handle redirect result when returning from Google login
-getRedirectResult(auth).catch(e => console.log('Redirect result error:', e));
+getRedirectResult(auth).then(result => {
+  // result will be null if not a redirect, or contain user if successful
+  // onAuthStateChanged will handle the rest
+}).catch(e => {
+  if (e.code !== 'auth/null-user') console.log('Redirect result error:', e);
+});
 
 document.getElementById('btn-logout').addEventListener('click', async () => {
   if (confirm('Sign out?')) {
@@ -645,9 +651,6 @@ function renderAnswerPanel() {
 // =====================
 // Quiz fretboard SVG
 // =====================
-// feedbackDots: array of {string, fret, color} to show
-let quizFeedbackDots = [];
-
 function renderQuizFretboard() {
   const container = document.getElementById('quiz-fretboard-container');
   const useFlat   = quizAccidental === 'flat';
