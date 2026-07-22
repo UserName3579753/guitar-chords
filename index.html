@@ -165,8 +165,9 @@
             <div class="quiz-toggle-row">
               <span class="quiz-toggle-label">Quiz type</span>
               <div class="mini-toggle" id="toggle-quiz-type">
-                <button class="mini-btn active" data-val="name">Name the note</button>
-                <button class="mini-btn" data-val="find">Find the note</button>
+                <button class="mini-btn active" data-val="name">Name it</button>
+                <button class="mini-btn" data-val="find">Find it</button>
+                <button class="mini-btn" data-val="findall">Find all</button>
               </div>
             </div>
             <div class="quiz-toggle-row">
@@ -199,6 +200,9 @@
 
           <!-- Answer buttons (tilstand 1: name the note) -->
           <div id="quiz-answer-panel" class="quiz-answer-panel"></div>
+
+          <!-- Find-all counter -->
+          <div id="quiz-counter" class="quiz-counter" style="display:none;"></div>
 
           <!-- Next button -->
           <button id="btn-next-question" class="btn-next">Next question ›</button>
