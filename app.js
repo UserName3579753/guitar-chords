@@ -1,4 +1,4 @@
-// v2.2 - strings reversed, persistent feedback, retry on wrong answer
+// v2.3 - added find-all quiz mode
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
 import { getAuth, GoogleAuthProvider, signInWithPopup, signOut, onAuthStateChanged }
   from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
@@ -543,28 +543,75 @@ function nextQuestion() {
   quizAnswered = false;
   quizFeedbackDots = [];
   const pool = getQuizPool();
-  quizQuestion = pool[Math.floor(Math.random() * pool.length)];
 
-  const useFlat = quizAccidental === 'flat';
-  const stringName = STRING_NAMES[quizQuestion.string];
-  const fretDesc = quizQuestion.fret === 0 ? 'open string' : `fret ${quizQuestion.fret}`;
-  // String number from top: string 0 = 1st (high e), string 5 = 6th (low E)
-  const ordinals = ['1st','2nd','3rd','4th','5th','6th'];
-
-  if (quizType === 'name') {
+  if (quizType === 'findall') {
+    // Pick a random note name and ask user to find ALL positions
+    const useFlat = quizAccidental === 'flat';
+    const notePool = quizNoteType === 'natural' ? NATURAL_NOTES :
+      (useFlat ? [...new Set(NOTES_FLAT)] : [...new Set(NOTES_SHARP)]);
+    const randomNote = notePool[Math.floor(Math.random() * notePool.length)];
+    quizQuestion = { note: randomNote };
     document.getElementById('quiz-question').textContent =
-      `${ordinals[quizQuestion.string]} string (${stringName}), ${fretDesc} — what note is this?`;
-    renderAnswerPanel();
-  } else {
-    document.getElementById('quiz-question').textContent =
-      `Find ${quizQuestion.note} on the fretboard`;
+      `Find all ${randomNote} on the fretboard`;
     document.getElementById('quiz-answer-panel').innerHTML = '';
+    updateFindAllCounter();
+  } else {
+    quizQuestion = pool[Math.floor(Math.random() * pool.length)];
+    const useFlat = quizAccidental === 'flat';
+    const stringName = STRING_NAMES[quizQuestion.string];
+    const fretDesc = quizQuestion.fret === 0 ? 'open string' : `fret ${quizQuestion.fret}`;
+    const ordinals = ['1st','2nd','3rd','4th','5th','6th'];
+
+    if (quizType === 'name') {
+      document.getElementById('quiz-question').textContent =
+        `${ordinals[quizQuestion.string]} string (${stringName}), ${fretDesc} — what note is this?`;
+      renderAnswerPanel();
+    } else {
+      document.getElementById('quiz-question').textContent =
+        `Find ${quizQuestion.note} on the fretboard`;
+      document.getElementById('quiz-answer-panel').innerHTML = '';
+    }
+    document.getElementById('quiz-counter').style.display = 'none';
   }
 
+  updateNextButton();
   renderQuizFretboard();
 }
 
-function renderAnswerPanel() {
+function getAllCorrectPositions() {
+  const useFlat = quizAccidental === 'flat';
+  const positions = [];
+  for (let s = 0; s < 6; s++) {
+    for (let f = 0; f <= 12; f++) {
+      if (getNoteAt(s, f, useFlat) === quizQuestion.note) {
+        positions.push({ string: s, fret: f });
+      }
+    }
+  }
+  return positions;
+}
+
+function updateFindAllCounter() {
+  if (quizType !== 'findall') return;
+  const total = getAllCorrectPositions().length;
+  const found = quizFeedbackDots.filter(d => d.color === 'green').length;
+  const counter = document.getElementById('quiz-counter');
+  counter.style.display = 'block';
+  counter.textContent = `${found} / ${total} found`;
+}
+
+function updateNextButton() {
+  const btn = document.getElementById('btn-next-question');
+  if (quizType === 'findall') {
+    const total = getAllCorrectPositions().length;
+    const found = quizFeedbackDots.filter(d => d.color === 'green').length;
+    btn.disabled = found < total;
+  } else {
+    btn.disabled = false;
+  }
+}
+
+
   const useFlat = quizAccidental === 'flat';
   const notes = useFlat ? NOTES_FLAT : NOTES_SHARP;
   const pool = quizNoteType === 'natural' ? NATURAL_NOTES : notes;
@@ -664,8 +711,8 @@ function renderQuizFretboard() {
     svg += `<circle cx="${markX}" cy="${markY}" r="10" fill="none" stroke="#e94560" stroke-width="2.5"/>`;
   }
 
-  // Tap zones (mode 2)
-  if (quizType === 'find') {
+  // Tap zones (mode 2 + findall)
+  if (quizType === 'find' || quizType === 'findall') {
     for (let s = 0; s < STRINGS; s++) {
       svg += `<rect x="${PL - CW}" y="${PT + s*CH - CH/2}" width="${CW}" height="${CH}" fill="transparent" class="fb-tap" data-s="${s}" data-f="0"/>`;
       for (let f = 1; f <= FRETS; f++) {
@@ -687,24 +734,36 @@ function renderQuizFretboard() {
   svg += '</svg>';
   container.innerHTML = svg;
 
-  // Tap handlers for find mode
-  if (quizType === 'find') {
+  // Tap handlers for find and findall modes
+  if (quizType === 'find' || quizType === 'findall') {
     container.querySelectorAll('.fb-tap').forEach(el => {
       el.addEventListener('click', () => {
-        if (quizAnswered) return;
         const s = +el.dataset.s;
         const f = +el.dataset.f;
-        const tappedNote = getNoteAt(s, f, useFlat);
-        const correct = tappedNote === quizQuestion.note;
 
-        // Add dot to persistent list
-        quizFeedbackDots.push({ string: s, fret: f, color: correct ? 'green' : 'red' });
+        // Don't allow tapping already-marked green positions
+        const alreadyGreen = quizFeedbackDots.find(d => d.string === s && d.fret === f && d.color === 'green');
+        if (alreadyGreen) return;
 
-        if (correct) {
-          quizAnswered = true;
+        if (quizType === 'find') {
+          if (quizAnswered) return;
+          const tappedNote = getNoteAt(s, f, useFlat);
+          const correct = tappedNote === quizQuestion.note;
+          quizFeedbackDots.push({ string: s, fret: f, color: correct ? 'green' : 'red' });
+          if (correct) quizAnswered = true;
+          renderQuizFretboard();
+
+        } else {
+          // findall mode
+          const tappedNote = getNoteAt(s, f, useFlat);
+          const correct = tappedNote === quizQuestion.note;
+          // Remove any existing red dot at this position
+          quizFeedbackDots = quizFeedbackDots.filter(d => !(d.string === s && d.fret === f));
+          quizFeedbackDots.push({ string: s, fret: f, color: correct ? 'green' : 'red' });
+          updateFindAllCounter();
+          updateNextButton();
+          renderQuizFretboard();
         }
-
-        renderQuizFretboard();
       });
     });
   }
