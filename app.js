@@ -615,6 +615,7 @@ function updateNextButton() {
 }
 
 
+function renderAnswerPanel() {
   const useFlat = quizAccidental === 'flat';
   const notes = useFlat ? NOTES_FLAT : NOTES_SHARP;
   const pool = quizNoteType === 'natural' ? NATURAL_NOTES : notes;
@@ -627,15 +628,14 @@ function updateNextButton() {
     btn.className = 'quiz-answer-btn';
     btn.textContent = note;
     btn.addEventListener('click', () => {
-      if (btn.classList.contains('correct')) return; // already got it right
+      if (btn.classList.contains('correct')) return;
       const correct = note === quizQuestion.note;
       if (correct) {
         btn.classList.add('correct');
         quizAnswered = true;
-        renderQuizFretboard('green', quizQuestion.string, quizQuestion.fret);
+        renderQuizFretboard();
       } else {
         btn.classList.add('wrong');
-        // Wrong stays red, user can keep trying
       }
     });
     panel.appendChild(btn);
