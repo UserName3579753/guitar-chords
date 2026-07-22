@@ -1,6 +1,6 @@
 // v2.3 - added find-all quiz mode
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
-import { getAuth, GoogleAuthProvider, signInWithPopup, signOut, onAuthStateChanged }
+import { getAuth, GoogleAuthProvider, signInWithPopup, signInWithRedirect, getRedirectResult, signOut, onAuthStateChanged }
   from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
 import { getFirestore, collection, addDoc, getDocs, updateDoc, deleteDoc, doc, query, where }
   from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
@@ -91,9 +91,12 @@ window.showScreen = function(name) {
 // Auth
 // =====================
 document.getElementById('btn-google-login').addEventListener('click', async () => {
-  try { await signInWithPopup(auth, new GoogleAuthProvider()); }
+  try { await signInWithRedirect(auth, new GoogleAuthProvider()); }
   catch (e) { alert('Login failed: ' + e.message); }
 });
+
+// Handle redirect result when returning from Google login
+getRedirectResult(auth).catch(e => console.log('Redirect result error:', e));
 
 document.getElementById('btn-logout').addEventListener('click', async () => {
   if (confirm('Sign out?')) {
